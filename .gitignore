@@ -1,0 +1,8 @@
+Dockerfile
+build
+dist
+*.egg-info
+data/*
+*.pt
+.idea
+__pycache__
