@@ -10,16 +10,11 @@ def load_config():
     return RecNamespace(yaml.load(open(f"{cur_dir}/config.yml"), Loader=yaml.FullLoader)["sakura"])
 
 
-def init_loaders(seed, batch_size, test_batch_size, device):
+def init_loaders(seed, batch_size, test_batch_size):
     # Instantiate
     torch.manual_seed(seed)
     train_kwargs = {'batch_size':batch_size}
     test_kwargs = {'batch_size': test_batch_size}
-    if device=="cuda":
-        cuda_kwargs = {'num_workers': 1,
-                       'pin_memory': True,
-                       'shuffle': True}
-        train_kwargs.update(cuda_kwargs)
 
     transform=transforms.Compose(
         [
@@ -27,7 +22,7 @@ def init_loaders(seed, batch_size, test_batch_size, device):
             transforms.Normalize((0.1307,), (0.3081,))
         ])
     dataset1, dataset2 = datasets.MNIST('data',
-                                        train=False,
+                                        train=True,
                                         download=True,
                                         transform=transform), \
                          datasets.MNIST('data',

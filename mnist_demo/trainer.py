@@ -17,7 +17,8 @@ class Trainer(SakuraTrainer):
                  epochs=100,
                  model_path="mnist_cnn.pt",
                  checkpoint_path="mnist_cnn.ckpt.pt",
-                 device="cuda"):
+                 device="cuda",
+                 device_test="cuda"):
         super(Trainer, self).__init__(model,
                                       optimizer,
                                       scheduler,
@@ -25,7 +26,9 @@ class Trainer(SakuraTrainer):
                                       epochs,
                                       model_path,
                                       checkpoint_path,
-                                      device)
+                                      device,
+                                      device_test)
+
 
     def description(self):
         current, best = self._metrics.test.current, self._metrics.test.best
@@ -36,7 +39,7 @@ class Trainer(SakuraTrainer):
     @parallel
     def train(self, train_loader):
         self._model.train()
-        self._model.to("cuda")
+        self._model.to(self._device)
         loader = train_loader
         current, best = self._metrics.train.current, self._metrics.train.best
 
@@ -59,12 +62,12 @@ class Trainer(SakuraTrainer):
     def test(self, test_loader):
         # Use a reference to the metrics
         self._model.eval()
-        self._model.to("cuda")
+        self._model.to(self._device_test)
         loader, correct = test_loader, 0
         current, best = self._metrics.test.current, self._metrics.test.best
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(loader):
-                data, target = data.to(self._device), target.to(self._device)
+                data, target = data.to(self._device_test), target.to(self._device_test)
                 output = self._model(data)
                 # Loss
                 current.loss += F.nll_loss(output, target, reduction='sum').item()
