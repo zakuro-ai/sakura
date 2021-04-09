@@ -23,7 +23,8 @@ if __name__ == "__main__":
                       epochs=sakura.trainer.epochs,
                       model_path=sakura.trainer.model_path,
                       checkpoint_path=sakura.trainer.checkpoint_path,
-                      device=sakura.trainer.device)
+                      device=sakura.trainer.device,
+                      device_test=sakura.trainer.device_test)
 
     # Comment the following line to disable to async trainer
     trainer = AsyncTrainer(trainer=trainer,
@@ -32,8 +33,7 @@ if __name__ == "__main__":
     # Init the loaders
     train_loader, test_loader = init_loaders(seed=sakura.loader.seed,
                                              batch_size=sakura.loader.batch_size,
-                                             test_batch_size=sakura.loader.test_batch_size,
-                                             device=sakura.loader.device)
+                                             test_batch_size=sakura.loader.test_batch_size)
 
     # Run the trainer
     trainer.run(train_loader=train_loader,

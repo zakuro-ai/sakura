@@ -9,7 +9,7 @@ from datetime import timedelta
 class AsyncTrainer:
     def __init__(self,
                  trainer,
-                 device="cuda",
+                 device="cpu",
                  device_test="cpu",
                  backend='gloo',
                  host='127.0.0.1',

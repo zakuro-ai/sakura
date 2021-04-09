@@ -28,9 +28,9 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
 from sakura.ml import AsyncTrainer
 from sakura import defaultMetrics
-from .trainer import Trainer
-from .model import Net
-from .utils import init_loaders, load_config
+from mnist_demo.trainer import Trainer
+from mnist_demo.model import Net
+from mnist_demo.utils import init_loaders, load_config
 
 if __name__ == "__main__":
     # Load the config
@@ -49,7 +49,8 @@ if __name__ == "__main__":
                       epochs=sakura.trainer.epochs,
                       model_path=sakura.trainer.model_path,
                       checkpoint_path=sakura.trainer.checkpoint_path,
-                      device=sakura.trainer.device)
+                      device=sakura.trainer.device,
+                      device_test=sakura.trainer.device_test)
 
     # Comment the following line to disable to async trainer
     trainer = AsyncTrainer(trainer=trainer,
@@ -58,12 +59,12 @@ if __name__ == "__main__":
     # Init the loaders
     train_loader, test_loader = init_loaders(seed=sakura.loader.seed,
                                              batch_size=sakura.loader.batch_size,
-                                             test_batch_size=sakura.loader.test_batch_size,
-                                             device=sakura.loader.device)
+                                             test_batch_size=sakura.loader.test_batch_size)
 
     # Run the trainer
     trainer.run(train_loader=train_loader,
                 test_loader=test_loader)
+
 ```
 
 
