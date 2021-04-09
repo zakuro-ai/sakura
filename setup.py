@@ -3,7 +3,7 @@ import json
 
 setup(
     name="sakura-ml",
-    version="0.0.1",
+    version="0.0.2",
     short_description="Sakura provides asynchronous training for DNN.",
     long_description="Sakura provides asynchronous training for DNN.",
     url='https://zakuro.ai',
@@ -11,6 +11,8 @@ setup(
         "sakura",
         "sakura.ml",
         "sakura.ml.decorators",
+        "sakura.ml.epoch",
+        "sakura.ml.metrics",
     ],
     license='ZakuroAI',
     author='ZakuroAI',
