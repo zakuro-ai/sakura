@@ -1,5 +1,6 @@
 from argparse import Namespace
 
+
 def RecNamespace(d):
     results = {}
     for k, v in d.items():
@@ -16,3 +17,7 @@ def RecDict(d):
             v = RecDict(v)
         results[k] = v
     return dict(results)
+
+lossAcc = {"loss": 0, "accuracy": 0}
+metrics = {"current": lossAcc.copy(), "best": lossAcc.copy()}
+defaultMetrics = RecNamespace({"train": metrics.copy(), "test": metrics.copy()})
