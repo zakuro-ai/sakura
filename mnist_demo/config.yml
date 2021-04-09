@@ -1,8 +1,8 @@
 sakura:
   trainer:
     epochs: 10
-    model_path: "mnist_cnn.pt"
-    checkpoint_path: "mnist_cnn.ckpt.pt"
+    model_path: "pth/mnist_cnn.pt"
+    checkpoint_path: "pth/mnist_cnn.ckpt.pt"
     device: &device "cuda"
     device_test: "cpu"
   optim:

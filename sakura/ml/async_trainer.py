@@ -1,8 +1,7 @@
-from __future__ import print_function
 import os
+import json
 import torch.distributed as dist
 from torch.multiprocessing import Process
-import json
 from sakura import RecDict
 from datetime import timedelta
 

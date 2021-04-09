@@ -5,7 +5,8 @@ import torch
 from sakura.ml import SakuraTrainer
 from sakura.ml.decorators import parallel
 from sakura import defaultMetrics
-
+import os
+from gnutools.fs import parent
 
 class Trainer(SakuraTrainer):
     def __init__(self,
@@ -74,6 +75,7 @@ class Trainer(SakuraTrainer):
 
     def checkpoint(self):
         if self._metrics.test.current == self._metrics.test.best:
+            os.makedirs(parent(self._model_path), exist_ok=True)
             torch.save(self._model.state_dict(), self._model_path)
 
     def run(self, train_loader, test_loader):

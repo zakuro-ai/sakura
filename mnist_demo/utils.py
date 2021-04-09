@@ -4,9 +4,11 @@ import yaml
 from sakura import RecNamespace
 import os
 
+
 def load_config():
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     return RecNamespace(yaml.load(open(f"{cur_dir}/config.yml"), Loader=yaml.FullLoader)["sakura"])
+
 
 def init_loaders(seed, batch_size, test_batch_size, device):
     # Instantiate
