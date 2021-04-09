@@ -11,12 +11,12 @@ class AsyncTrainer:
     def __init__(self,
                  trainer,
                  device="cuda",
+                 device_test="cpu",
                  backend='gloo',
                  host='127.0.0.1',
                  port=58604,
                  store_host='127.0.0.1',
-                 store_port=58605,
-                 device_test = "cpu"):
+                 store_port=58605):
         """ Initialize the distributed environment. """
         os.environ['MASTER_ADDR'] = host
         os.environ['MASTER_PORT'] = str(port)

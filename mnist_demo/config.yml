@@ -1,0 +1,16 @@
+sakura:
+  trainer:
+    epochs: 10
+    model_path: "mnist_cnn.pt"
+    checkpoint_path: "mnist_cnn.ckpt.pt"
+    device: &device "cuda"
+    device_test: "cpu"
+  optim:
+    lr: 1.0
+    gamma: 0.7
+    step: 1
+  loader:
+    seed: 1
+    batch_size: 640
+    test_batch_size: 1000
+    device: *device

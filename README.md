@@ -21,43 +21,49 @@ At a granular level, Sakura is a library that consists of the following componen
 | **sakura.decorators** | Decorators used to synchronize the train/test.|
 
 ## Code design
-If you worked with PyTorch in your project your would find a common structure. Simply change the `test` and `train` in your trainer as shown in the demo file. 
+If you worked with PyTorch in your project your would find a common structure. 
+Simply change the `test` and `train` in your trainer as shown in `mnist_demo`. 
 ```python
-class Trainer(DefaultTrainer):
-   ...
-    @synchronize
-    def train(self):
-        self._model.train()
-        self._avg_loss = []
-        self._correct=0
-        for batch_idx, (data, target) in tqdm(
-                enumerate(self._train_loader),
-                total=len(self._train_loader),
-                desc=self.description()):
-            data, target = data.to(self._device), target.to(self._device)
-            self._optimizer.zero_grad()
-            output = self._model(data)
-            loss= F.nll_loss(output, target)
-            loss.backward()
-            self._avg_loss.append(loss.item())
-            self._optimizer.step()
-            pred = output.argmax(dim=1, keepdim=True) 
-            self._correct += pred.eq(target.view_as(pred)).sum().item()
+import torch.optim as optim
+from torch.optim.lr_scheduler import StepLR
+from sakura.ml import AsyncTrainer
+from sakura import defaultMetrics
+from .trainer import Trainer
+from .model import Net
+from .utils import init_loaders, load_config
 
-    @synchronize
-    def test(self):
-        self._correct = 0
-        self._loss = 0
-        # Test
-        self._model.eval()
-        with torch.no_grad():
-            for batch_idx, (data, target) in enumerate(self._test_loader):
-                data, target = data.to(self._device), target.to(self._device)
-                output = self._model(data)
-                self._loss += F.nll_loss(output, target, reduction='sum').item()  
-                pred = output.argmax(dim=1, keepdim=True) 
-                self._correct += pred.eq(target.view_as(pred)).sum().item()
+if __name__ == "__main__":
+    # Load the config
+    sakura = load_config()
 
+    # Initialize
+    model = Net()
+    optimizer = optim.Adadelta(model.parameters(), lr=sakura.optim.lr)
+    scheduler = StepLR(optimizer, step_size=sakura.optim.step, gamma=sakura.optim.gamma)
+
+    # Build the trainer
+    trainer = Trainer(model=model,
+                      optimizer=optimizer,
+                      scheduler=scheduler,
+                      metrics=defaultMetrics,
+                      epochs=sakura.trainer.epochs,
+                      model_path=sakura.trainer.model_path,
+                      checkpoint_path=sakura.trainer.checkpoint_path,
+                      device=sakura.trainer.device)
+
+    # Comment the following line to disable to async trainer
+    trainer = AsyncTrainer(trainer=trainer,
+                           device_test=sakura.trainer.device_test)
+
+    # Init the loaders
+    train_loader, test_loader = init_loaders(seed=sakura.loader.seed,
+                                             batch_size=sakura.loader.batch_size,
+                                             test_batch_size=sakura.loader.test_batch_size,
+                                             device=sakura.loader.device)
+
+    # Run the trainer
+    trainer.run(train_loader=train_loader,
+                test_loader=test_loader)
 ```
 
 
@@ -78,6 +84,12 @@ To build the image and launch a container to run a test demo on MNIST.
 ```
 docker pull zakuroai/sakura
 sh docker.sh
+```
+
+### Try it!
+
+```python
+python -m mnist_demo
 ```
 You should be able to see this output with no delay between epochs (asynchronous testing).
 ```

@@ -2,12 +2,12 @@ from __future__ import print_function
 import torch.nn.functional as F
 from tqdm import tqdm
 import torch
-from sakura.ml import DefaultTrainer
+from sakura.ml import SakuraTrainer
 from sakura.ml.decorators import parallel
 from sakura import defaultMetrics
 
 
-class Trainer(DefaultTrainer):
+class Trainer(SakuraTrainer):
     def __init__(self,
                  model,
                  optimizer,
@@ -25,6 +25,7 @@ class Trainer(DefaultTrainer):
                                       model_path,
                                       checkpoint_path,
                                       device)
+
     def description(self):
         current, best = self._metrics.test.current, self._metrics.test.best
         suffix = f" | Acc: {current.accuracy:.4f} / ({best.accuracy:.4f})"

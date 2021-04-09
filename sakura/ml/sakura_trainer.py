@@ -1,6 +1,6 @@
 from sakura.ml.epoch import range
 
-class DefaultTrainer:
+class SakuraTrainer:
     def __init__(self, model, optimizer, scheduler, metrics, epochs, model_path, checkpoint_path, device):
         self._model = model
         self._optimizer = optimizer
