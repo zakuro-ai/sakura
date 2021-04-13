@@ -53,8 +53,7 @@ if __name__ == "__main__":
                       device_test=sakura.trainer.device_test)
 
     # Comment the following line to disable to async trainer
-    trainer = AsyncTrainer(trainer=trainer,
-                           device_test=sakura.trainer.device_test)
+    trainer = AsyncTrainer(trainer=trainer)
 
     # Init the loaders
     train_loader, test_loader = init_loaders(seed=sakura.loader.seed,
@@ -64,6 +63,7 @@ if __name__ == "__main__":
     # Run the trainer
     trainer.run(train_loader=train_loader,
                 test_loader=test_loader)
+
 
 ```
 
