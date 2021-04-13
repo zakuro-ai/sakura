@@ -9,8 +9,6 @@ from datetime import timedelta
 class AsyncTrainer:
     def __init__(self,
                  trainer,
-                 device="cpu",
-                 device_test="cpu",
                  backend='gloo',
                  host='127.0.0.1',
                  port=58604,
@@ -23,16 +21,15 @@ class AsyncTrainer:
         os.environ['STORE_ADDR'] = str(store_host)
         self.__trainer = trainer
         self.backend=backend
-        self.device=device
         self.world = [
-            ("train", self.device),
-            ("test", device_test)
+            "train",
+            "test"
         ]
         self.world_size = len(self.world)
 
     def run(self, *args, **kwargs):
         processes = []
-        for rank, (mode, device) in enumerate(self.world):
+        for rank, mode in enumerate(self.world):
             p = Process(target=self.init_process, args=(rank, args, kwargs, mode))
             p.start()
             processes.append(p)
