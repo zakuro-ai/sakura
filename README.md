@@ -69,14 +69,20 @@ if __name__ == "__main__":
 
 
 ## Installation (CPU/GPU)
+### Dependencies
+Sakura depends on MPI therefore please install mpirun first.
+```
+sudo snap install mpirun
+```
+Move the `config_template.yml` file into `$HOME/.config/sakura/config.yml`. 
+
 ### Local
-Move the `config_template.yml` file into `$HOME/.config/sakura/config.yml` and install the wheel file. 
 ```
 pip install dist/*.whl
 pip install dist/*.whl  --extra-index-url https://download.pytorch.org/whl/cu116
 ```
 
-### Pypi (CPU/GPU)
+### Pypi
 ```
 pip install sakura-ml 
 pip install sakura-ml --extra-index-url https://download.pytorch.org/whl/cu116
@@ -89,7 +95,7 @@ docker pull zakuroai/sakura
 sh docker.sh
 ```
 
-### Try it!
+## Try it!
 
 ```python
 sakura -m mnist_demo
