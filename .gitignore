@@ -1,3 +1,6 @@
+dist/legacy
+asr
+pth
 Dockerfile
 build
 dist
@@ -6,3 +9,5 @@ data/*
 *.pt
 .idea
 __pycache__
+config.yml
+.vscode

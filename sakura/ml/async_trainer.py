@@ -1,54 +1,59 @@
 import os
-import json
-import torch.distributed as dist
-from torch.multiprocessing import Process
 from sakura import RecDict
-from datetime import timedelta
+from mpi4py import MPI
+import logging
+from collections import OrderedDict
+import pickle
+from sakura.functional import RecNamespace
 
 
 class AsyncTrainer:
     def __init__(self,
                  trainer,
-                 backend='gloo',
-                 host='127.0.0.1',
-                 port=58604,
-                 store_host='127.0.0.1',
-                 store_port=58605):
+                 ):
         """ Initialize the distributed environment. """
-        os.environ['MASTER_ADDR'] = host
-        os.environ['MASTER_PORT'] = str(port)
-        os.environ['STORE_PORT'] = str(store_port)
-        os.environ['STORE_ADDR'] = str(store_host)
-        self.__trainer = trainer
-        self.backend=backend
-        self.world = [
-            "train",
-            "test"
-        ]
-        self.world_size = len(self.world)
+        self._comm = MPI.COMM_WORLD
+        self._rank = self._comm.Get_rank()
+        self._trainer = trainer
+        self._mode = "train" if self._rank == 0 else "test"
 
-    def run(self, *args, **kwargs):
-        processes = []
-        for rank, mode in enumerate(self.world):
-            p = Process(target=self.init_process, args=(rank, args, kwargs, mode))
-            p.start()
-            processes.append(p)
+    def run(self, train_loader=None, test_loader=None):
+        if self._mode == "train":
+            # Run the trainer
+            for self._trainer._epoch in self._trainer._epochs:
+                req = self._comm.irecv(source=1)
+                if req.get_status():
+                    data = req.wait()
+                    self._trainer._metrics.test = RecNamespace(
+                        data["metrics"]["test"])
+                else:
+                    req.cancel()
+                self._trainer.train(train_loader=train_loader)
+                self._comm.send(
+                    {
+                        "state_dict": self._trainer.serialized_state_dict(),
+                        "metrics": RecDict(self._trainer._metrics),
+                    }, dest=1)
+            self._comm.send("ACK", dest=1)
 
-        for p in processes:
-            p.join()
+        else:
+            # Run the trainer
+            for self._trainer._epoch in self._trainer._epochs:
+                sd = self._comm.recv(source=0)
+                if sd == "ACK":
+                    logging.warning("Ends")
+                    return
+                self._trainer._metrics.train = RecNamespace(
+                    sd["metrics"]["train"])
+                train_sd = sd["state_dict"]
+                self.deserialize(train_sd, self._trainer._model)
+                self._trainer.test(test_loader=test_loader)
+                self._comm.isend(
+                    {"metrics": RecDict(self._trainer._metrics)}, dest=0)
 
-    def init_process(self, rank, args, kwargs, mode):
-        dist.init_process_group(self.backend, rank=rank, world_size=self.world_size)
-        store = dist.TCPStore(os.environ['STORE_ADDR'],
-                              int(os.environ['STORE_PORT']),
-                              len(self.world),
-                              rank==0,
-                              timedelta(seconds=30))
-        self.__trainer._dist = dist
-        self.__trainer._rank = rank
-        self.__trainer._mode = mode
-        self.__trainer._world_size=len(self.world)
-        store.set("test", str(json.dumps(RecDict(self.__trainer._metrics.test))))
-        self.__trainer._store = store
-        self.__trainer.run(*args, **kwargs)
-
+    @staticmethod
+    def deserialize(_sd, model):
+        sd = OrderedDict()
+        for k, v in _sd.items():
+            sd[k] = pickle.loads(v)
+        model.load_state_dict(sd)
