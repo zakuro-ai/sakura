@@ -1,5 +1,8 @@
+--extra-index-url=https://download.pytorch.org/whl/cu116
+tqdm>=4.64.0
 torch
 torchvision
 numpy
-tqdm
 gnutools-python
+mpi4py
+six
