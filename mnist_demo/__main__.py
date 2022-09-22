@@ -5,7 +5,7 @@ from sakura import defaultMetrics
 from mnist_demo.trainer import Trainer
 from mnist_demo.model import Net
 from mnist_demo.utils import init_loaders
-from mnist_demo import cfg
+from sakura import cfg
 
 if __name__ == "__main__":
     # Initialize

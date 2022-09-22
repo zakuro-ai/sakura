@@ -1,12 +1,12 @@
 dist/legacy
 asr
 pth
-Dockerfile
 build
 *.egg-info
 data/*
 *.pt
 .idea
 __pycache__
-config.yml
 .vscode
+data
+tmp

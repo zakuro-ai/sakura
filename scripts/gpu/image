@@ -1,6 +1,0 @@
-#!/bin/sh
-
-cd ../../
-
-docker rmi -f zakuroai/sakura
-docker build . -t zakuroai/sakura -f docker/gpu/Dockerfile

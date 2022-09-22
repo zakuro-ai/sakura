@@ -1,10 +1,9 @@
 import os
-from sakura import RecDict
 from mpi4py import MPI
 import logging
 from collections import OrderedDict
 import pickle
-from sakura.functional import RecNamespace
+from gnutools.utils import RecNamespace, RecDict
 
 
 class AsyncTrainer:

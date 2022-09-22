@@ -1,5 +1,0 @@
-cd ../
-./build
-cd gpu
-./image 
-./run
