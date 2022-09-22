@@ -1,15 +1,5 @@
 from torchvision import datasets, transforms
 import torch
-import yaml
-import os
-from gnutools.fs import load_config as _load_config
-from gnutools.utils import RecNamespace
-
-
-def load_config():
-    config_path = f"{os.environ['HOME']}/.config/sakura/config.yml"
-    cfg = _load_config(config_path).sakura
-    return RecNamespace(cfg)
 
 
 def init_loaders(seed, batch_size, test_batch_size):

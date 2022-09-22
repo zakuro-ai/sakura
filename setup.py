@@ -1,11 +1,6 @@
 from setuptools import setup
 from sakura import __version__
 
-deps = [l.rsplit()
-        for l in open("requirements.txt", "r") if not l.startswith("--")]
-deps_url = [l.rsplit()[0].split("=")[1]
-            for l in open("requirements.txt", "r") if l.startswith("--")]
-
 setup(
     name="sakura-ml",
     version=__version__,
@@ -22,12 +17,13 @@ setup(
             "sakura=sakura:main"
         ]
     },
-    license='ZakuroAI',
+    include_package_data=True,
+    package_data={"": ["*.yml"]},
+    install_requires=[r.rsplit()[0] for r in open("requirements.txt")],
+    license='MIT',
     author='ZakuroAI',
-    python_requires='>=3.8',
-    dependency_links=deps_url,
-    install_requires=deps,
-    author_email='info@zakuro.ai',
+    python_requires='>=3.6',
+    author_email='git@zakuro.ai',
     description='Sakura provides asynchronous training for DNN.',
     platforms="linux_debian_10_x86_64",
     classifiers=[

@@ -1,0 +1,16 @@
+project: sakura
+
+trainer:
+  epochs: 10
+  model_path: "pth/mnist_cnn.pt"
+  checkpoint_path: "pth/mnist_cnn.ckpt.pt"
+  device: "cuda"
+  device_test: "cuda"
+optim:
+  lr: 1.0
+  gamma: 0.7
+  step: 1
+loader:
+  seed: 1
+  batch_size: 3500
+  test_batch_size: 3500
