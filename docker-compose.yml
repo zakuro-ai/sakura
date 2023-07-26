@@ -2,7 +2,6 @@ version: "3.9"
 
 services:
   sandbox:
-    # Only amd64 works
     container_name: sakura
     image: zakuroai/sakura
     build:
@@ -32,5 +31,5 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: all
               capabilities: [ gpu ]
