@@ -1,36 +1,44 @@
 version: "3.9"
 
+x-default: &default
+  container_name: sakura
+  volumes:
+    - "./:/workspace"
+    - /srv:/srv
+  tty: true
+  environment:
+    - PYTHONPATH=$PYTHONPATH
+    - PYENV=zak38
+    - ZAKURO_AUTH=$ZAKURO_AUTH
+    - MASTER_HOST=127.0.0.1
+  cap_add:
+    - SYS_ADMIN
+  devices:
+    - /dev/fuse:/dev/fuse
+  security_opt:
+    - apparmor:unconfined
+  extra_hosts:
+    - zfs:10.1.0.24
+  user: foo
+  entrypoint: bash
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [ gpu ]
+
 services:
+  vanilla:
+    <<: *default
+    image: zakuroai/sakura:vanilla
+    build:
+      context: .
+      dockerfile: docker/vanilla/Dockerfile
+
   sandbox:
-    # Only amd64 works
-    container_name: sakura
     image: zakuroai/sakura
     build:
       context: .
-      dockerfile: docker/Dockerfile
-    volumes:
-      - "./:/workspace"
-      - /srv:/srv
-    tty: true
-    environment:
-      - PYTHONPATH=$PYTHONPATH
-      - PYENV=zak38
-      - ZAKURO_AUTH=$ZAKURO_AUTH
-      - MASTER_HOST=127.0.0.1
-    cap_add:
-      - SYS_ADMIN
-    devices:
-      - /dev/fuse:/dev/fuse
-    security_opt:
-      - apparmor:unconfined
-    extra_hosts:
-      - zfs:10.1.0.24
-    user: foo
-    entrypoint: bash
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [ gpu ]
+      dockerfile: docker/sandbox/Dockerfile
