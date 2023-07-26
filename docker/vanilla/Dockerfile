@@ -21,4 +21,6 @@ RUN pip install -r /tmp/requirements.txt
 
 RUN echo "alias sakura='figlet Sakura ML && mpirun --mca btl_base_warn_component_unused 0 -np 2 python -W ignore'" >> /home/foo/.bashrc
 RUN echo "alias sakura='figlet Sakura ML && mpirun --mca btl_base_warn_component_unused 0 -np 2 python -W ignore'" >> /root/.bashrc
+
+RUN mkdir -p /opt/zakuro/pth && chown foo:foo -R /opt/zakuro
 WORKDIR /workspace
