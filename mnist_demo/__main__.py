@@ -25,7 +25,7 @@ if __name__ == "__main__":
                       device=cfg.trainer.device,
                       device_test=cfg.trainer.device_test)
 
-    # # Comment the following line to disable to async trainer
+    # Comment the following line to disable to async trainer
     trainer = AsyncTrainer(trainer=trainer)
 
     # Init the loaders
