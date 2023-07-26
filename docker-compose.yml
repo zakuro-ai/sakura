@@ -38,6 +38,7 @@ services:
       dockerfile: docker/vanilla/Dockerfile
 
   sandbox:
+    <<: *default
     image: zakuroai/sakura
     build:
       context: .
