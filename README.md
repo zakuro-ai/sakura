@@ -135,10 +135,8 @@ cd sakura
 # Makefile commands
 Exhaustive list of make commands:
 ```
+build
 build_wheel
-install_wheels
-build_dockers
-sandbox
 ```
 # Environments
 
@@ -150,7 +148,7 @@ sandbox
 
 Launch a docker image
 ```
-make sandbox
+make
 ```
 
 ## PythonEnv
