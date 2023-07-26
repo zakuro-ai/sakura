@@ -2,8 +2,8 @@ project: sakura
 
 trainer:
   epochs: 10
-  model_path: "pth/mnist_cnn.pt"
-  checkpoint_path: "pth/mnist_cnn.ckpt.pt"
+  model_path: "/opt/zakuro/pth/model.pt"
+  checkpoint_path: "/opt/zakuro/pth/model.ckpt.pt"
   device: "cuda"
   device_test: "cuda"
 optim:

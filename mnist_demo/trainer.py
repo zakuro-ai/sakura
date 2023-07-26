@@ -1,11 +1,14 @@
 from __future__ import print_function
-import torch.nn.functional as F
-from tqdm import tqdm
-import torch
-from sakura.ml import SakuraTrainer
-from sakura import defaultMetrics
+
 import os
+
+import torch
+import torch.nn.functional as F
 from gnutools.fs import parent
+from tqdm import tqdm
+
+from sakura import defaultMetrics
+from sakura.ml import SakuraTrainer
 
 
 class Trainer(SakuraTrainer):

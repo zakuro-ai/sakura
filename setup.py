@@ -5,7 +5,8 @@ setup(
     name="sakura-ml",
     version=__version__,
     short_description="Sakura provides asynchronous training for DNN.",
-    long_description="Sakura provides asynchronous training for DNN.",
+    long_description="".join(open("README.md", "r").readlines()),
+    long_description_content_type="text/markdown",
     url='https://zakuro.ai',
     packages=[
         "sakura",
