@@ -9,7 +9,7 @@ build:
 	docker compose build sandbox
 	docker compose down
 	docker compose up sandbox -d
-	docker exec -it iu_eda bash
+	docker exec -it $(PACKAGE_NAME) bash
 
 build_wheel: 
 	# Build the wheels
