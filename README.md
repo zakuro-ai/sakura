@@ -166,19 +166,22 @@ git clone https://github.com/zakuro-ai/sakura
 # Go into the repository
 cd sakura
 
+# Update global variables
+source .env
+
 # Install sakura
 curl https://get.zakuro.ai/sakura/install | sh
 ```
 
 ### Check that the binary has been downloaded
 ```bash
-PATH=$PATH:~/.zakuro/bin which sakura
+which sakura
 ```
 
 # Running the application
 
 ```bash
-PATH=$PATH:~/.zakuro/bin sakura main.py
+sakura main.py
 ```
 You should be able to see this output with no delay between epochs (asynchronous testing).
 ```
