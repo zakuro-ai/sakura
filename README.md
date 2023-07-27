@@ -47,14 +47,8 @@ setup(
     url='https://zakuro.ai',
     packages=[
         "sakura",
-        "sakura.ml",
-        "sakura.ml.epoch",
+        "sakura.lightning",
     ],
-    entry_points={
-        "console_scripts": [
-            "sakura=sakura:main"
-        ]
-    },
     include_package_data=True,
     package_data={"": ["*.yml"]},
     install_requires=[r.rsplit()[0] for r in open("requirements.txt")],
@@ -74,44 +68,85 @@ setup(
 If you worked with PyTorch in your project your would find a common structure. 
 Simply change the `test` and `train` in your trainer as shown in `mnist_demo`. 
 ```python
-import torch.optim as optim
-from torch.optim.lr_scheduler import StepLR
-from sakura.ml import AsyncTrainer
-from sakura import defaultMetrics
-from mnist_demo.trainer import Trainer
-from mnist_demo.model import Net
-from mnist_demo.utils import init_loaders
-from sakura import cfg
+import os
+import lightning as L
+import torch
+from torch import nn
+from torch.nn import functional as F
+from torch.utils.data import DataLoader
+from torchvision import transforms
+from torchvision.datasets import MNIST
+import argparse
+from sakura.lightning import SakuraTrainer
+
+
+class MNISTModel(L.LightningModule):
+    def __init__(self):
+        super(MNISTModel, self).__init__()
+        self.conv1 = nn.Conv2d(1, 32, 3, 1)
+        self.conv2 = nn.Conv2d(32, 64, 3, 1)
+        self.dropout1 = nn.Dropout(0.25)
+        self.dropout2 = nn.Dropout(0.5)
+        self.fc1 = nn.Linear(9216, 128)
+        self.fc2 = nn.Linear(128, 10)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = F.relu(x)
+        x = self.conv2(x)
+        x = F.relu(x)
+        x = F.max_pool2d(x, 2)
+        x = self.dropout1(x)
+        x = torch.flatten(x, 1)
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.dropout2(x)
+        x = self.fc2(x)
+        output = F.log_softmax(x, dim=1)
+        return output
+
+    def training_step(self, batch, batch_nb):
+        x, y = batch
+        loss = F.cross_entropy(self(x), y)
+        return loss
+
+    def validation_step(self, batch, batch_nb):
+        with torch.no_grad():
+            x, y = batch
+            loss = F.cross_entropy(self(x), y)
+        return loss
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=0.02)
+
 
 if __name__ == "__main__":
-    # Initialize
-    model = Net()
-    optimizer = optim.Adadelta(model.parameters(), lr=cfg.optim.lr)
-    scheduler = StepLR(optimizer, step_size=cfg.optim.step,
-                       gamma=cfg.optim.gamma)
+    PATH_DATASETS = os.environ.get("PATH_DATASETS", ".")
+    BATCH_SIZE = 2000 if torch.cuda.is_available() else 64
+    # Init our model
+    mnist_model = MNISTModel()
 
-    # Build the trainer
-    trainer = Trainer(model=model,
-                      optimizer=optimizer,
-                      scheduler=scheduler,
-                      metrics=defaultMetrics,
-                      epochs=cfg.trainer.epochs,
-                      model_path=cfg.trainer.model_path,
-                      checkpoint_path=cfg.trainer.checkpoint_path,
-                      device=cfg.trainer.device,
-                      device_test=cfg.trainer.device_test)
+    # Init DataLoader from MNIST Dataset
+    train_ds = MNIST(
+        PATH_DATASETS, train=True, download=True, transform=transforms.ToTensor()
+    )
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE)
 
-    # # Comment the following line to disable to async trainer
-    trainer = AsyncTrainer(trainer=trainer)
+    # Init DataLoader from MNIST Dataset
+    val_ds = MNIST(
+        PATH_DATASETS, train=False, download=True, transform=transforms.ToTensor()
+    )
+    val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE)
 
-    # Init the loaders
-    train_loader, test_loader = init_loaders(seed=cfg.loader.seed,
-                                             batch_size=cfg.loader.batch_size,
-                                             test_batch_size=cfg.loader.test_batch_size)
+    trainer = SakuraTrainer(
+        accelerator="auto",
+        max_epochs=10,
+    )
 
-    # # Run the rainer
-    trainer.run(train_loader=train_loader,
-                test_loader=test_loader)
+    trainer.run(
+        mnist_model, train_loader, val_loader, model_path="models/best_model.pth"
+    )
+
 ```
 
 # Installing the application
@@ -123,49 +158,27 @@ To clone and run this application, you'll need the following installed on your c
    - [Install Docker Desktop on Linux](https://docs.docker.com/desktop/install/linux-install/)
 - [Python](https://www.python.org/downloads/)
 
-Install the package:
+### Clone the code and install the binary
 ```bash
 # Clone this repository and install the code
 git clone https://github.com/zakuro-ai/sakura
 
 # Go into the repository
 cd sakura
+
+# Install sakura
+curl https://get.zakuro.ai/sakura/install | sh
 ```
 
-# Makefile commands
-Exhaustive list of make commands:
-```
-build
-build_wheel
-```
-# Environments
-
-## Docker
-
-> **Note**
-> 
-> Running this application by using Docker is recommended.
-
-Launch a docker image
-```
-make
-```
-
-## PythonEnv
-
-> **Warning**
-> 
-> Running this application by using PythonEnv is possible but *not* recommended.
-```
-sudo apt install libopenmpi-dev && \
-    pip install dist/*.whl  --extra-index-url https://download.pytorch.org/whl/cu116 && \
-    make install_wheels
+### Check that the binary has been downloaded
+```bash
+PATH=$PATH:~/.zakuro/bin which sakura
 ```
 
 # Running the application
 
-```python
-sakura -m mnist_demo
+```bash
+PATH=$PATH:~/.zakuro/bin sakura main.py
 ```
 You should be able to see this output with no delay between epochs (asynchronous testing).
 ```
