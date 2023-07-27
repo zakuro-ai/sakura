@@ -10,14 +10,8 @@ setup(
     url='https://zakuro.ai',
     packages=[
         "sakura",
-        "sakura.ml",
-        "sakura.ml.epoch",
+        "sakura.lightning",
     ],
-    entry_points={
-        "console_scripts": [
-            "sakura=sakura:main"
-        ]
-    },
     include_package_data=True,
     package_data={"": ["*.yml"]},
     install_requires=[r.rsplit()[0] for r in open("requirements.txt")],

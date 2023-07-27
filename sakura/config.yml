@@ -5,12 +5,12 @@ trainer:
   model_path: "/opt/zakuro/pth/model.pt"
   checkpoint_path: "/opt/zakuro/pth/model.ckpt.pt"
   device: "cuda"
-  device_test: "cuda"
+  device_test: "cpu"
 optim:
   lr: 1.0
   gamma: 0.7
   step: 1
 loader:
   seed: 1
-  batch_size: 3500
-  test_batch_size: 3500
+  batch_size: 50000
+  test_batch_size: 20000
