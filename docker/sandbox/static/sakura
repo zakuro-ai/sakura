@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# pkill -9 sakura
+figlet Sakura ML
+export SAKURA_ROLE=1
+nohup redis-server >/dev/null 2>&1 &
+nohup /opt/zakuro/bin/sakura $@ >/dev/null 2>&1 &
+SAKURA_ROLE=0 /opt/zakuro/bin/sakura $@

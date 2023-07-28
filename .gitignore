@@ -1,3 +1,4 @@
+etc
 dist/legacy
 asr
 pth
@@ -10,3 +11,10 @@ __pycache__
 .vscode
 data
 tmp
+etc/
+
+lightning_logs/
+
+dump.rdb
+
+*.rdb

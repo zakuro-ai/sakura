@@ -20,7 +20,7 @@ x-default: &default
   extra_hosts:
     - zfs:10.1.0.24
   user: foo
-  entrypoint: bash
+  # entrypoint: bash
   deploy:
     resources:
       reservations:
