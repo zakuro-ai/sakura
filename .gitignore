@@ -10,3 +10,10 @@ __pycache__
 .vscode
 data
 tmp
+etc/
+
+lightning_logs/
+
+dump.rdb
+
+*.rdb
