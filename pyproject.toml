@@ -40,6 +40,19 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 
+[project.optional-dependencies]
+huggingface = [
+    "transformers>=4.40.0",
+    "datasets>=2.14.0",
+]
+tensorflow = [
+    "tensorflow>=2.15.0",
+]
+bench = [
+    "sakura-ml[huggingface]",
+    "accelerate>=0.25.0",
+]
+
 [dependency-groups]
 dev = ["pytest"]
 

@@ -19,3 +19,4 @@ dump.rdb
 
 *.rdb
 .env
+models/
