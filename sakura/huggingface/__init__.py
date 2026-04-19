@@ -52,6 +52,37 @@ import zakuro as zk
 _WORKER_MODEL_CACHE: dict[str, Any] = {}
 
 
+def _get_or_build_model(
+    cache_key: Optional[str],
+    model_factory_bytes: bytes,
+) -> Any:
+    """Return a cached model if ``cache_key`` hits, else build+cache one.
+
+    Shared between the remote path (deserialises from bytes) and the
+    in-process path (calls the factory directly). Keeps both paths in sync
+    so the worker-side cache behaves the same regardless of transport.
+    """
+    import cloudpickle as _cp
+
+    if cache_key is not None and cache_key in _WORKER_MODEL_CACHE:
+        return _WORKER_MODEL_CACHE[cache_key]
+    model = _cp.loads(model_factory_bytes)()
+    if cache_key is not None:
+        _WORKER_MODEL_CACHE[cache_key] = model
+    return model
+
+
+def _align_dtype_in_place(model: Any, state_dict: dict) -> dict:
+    """Upcast (or match) tensor dtypes to the model's parameter dtype."""
+    import torch as _torch
+
+    target_dtype = next(model.parameters()).dtype
+    return {
+        k: (v.to(target_dtype) if hasattr(v, "to") and v.dtype != target_dtype else v)
+        for k, v in state_dict.items()
+    }
+
+
 @zk.fn
 def _remote_evaluate(
     state_bytes: bytes,
@@ -86,21 +117,9 @@ def _remote_evaluate(
     eval_fn = _cp.loads(eval_fn_bytes)
     eval_payload = _cp.loads(eval_payload_bytes)
 
-    if cache_key is not None and cache_key in _WORKER_MODEL_CACHE:
-        model = _WORKER_MODEL_CACHE[cache_key]
-    else:
-        model_factory = _cp.loads(model_factory_bytes)
-        model = model_factory()
-        if cache_key is not None:
-            _WORKER_MODEL_CACHE[cache_key] = model
-
+    model = _get_or_build_model(cache_key, model_factory_bytes)
     if fp16:
-        # Upcast to the model's existing parameter dtype on load.
-        target_dtype = next(model.parameters()).dtype
-        state_dict = {
-            k: (v.to(target_dtype) if hasattr(v, "to") else v)
-            for k, v in state_dict.items()
-        }
+        state_dict = _align_dtype_in_place(model, state_dict)
 
     model.load_state_dict(state_dict)
     model.eval()
@@ -314,6 +333,12 @@ class SakuraHFCallback(TrainerCallback):
         measured 1.7× faster and releases the GIL ~2× more often on the
         producer side (~480 ms → ~280 ms for 268 MB, concurrent-thread
         CPU share jumps from 39 % to 72 % of baseline).
+
+        **In-memory fast path**: when the compute target is standalone
+        (no URI, no host — the dispatch would run in-process anyway),
+        the state_dict is passed through as a Python object with no
+        serialisation round-trip at all. Saves the full torch.save cost
+        — measured ~280 ms/epoch for distilbert.
         """
         if copy_event is not None:
             copy_event.synchronize()
@@ -325,6 +350,10 @@ class SakuraHFCallback(TrainerCallback):
                 k: (v.to(_torch.float16) if v.dtype == _torch.float32 else v)
                 for k, v in state_dict_snapshot.items()
             }
+
+        if self._is_in_process_target():
+            return self._dispatch_in_memory(state_dict_snapshot, epoch)
+
         import io as _io
 
         import torch as _torch
@@ -333,6 +362,41 @@ class SakuraHFCallback(TrainerCallback):
         _torch.save(state_dict_snapshot, buf)
         state_bytes = buf.getvalue()
         return self._dispatch(state_bytes, epoch)
+
+    def _is_in_process_target(self) -> bool:
+        """True iff dispatching via this compute would run in the same
+        Python process (standalone fallback / resolved-to-local)."""
+        compute = self._compute
+        # Raw zk.Compute without URI/host → zakuro standalone fallback.
+        if getattr(compute, "uri", None) is None and getattr(compute, "host", None) is None:
+            return True
+        return False
+
+    def _dispatch_in_memory(
+        self, state_dict: dict, epoch: int,
+    ) -> dict:
+        """Zero-copy dispatch path for in-process compute targets.
+
+        Skips ``torch.save`` / ``torch.load`` and cloudpickle of the big
+        state_dict entirely — the evaluator runs in the pool thread with
+        the same state_dict Python object the callback snapshotted.
+        """
+        import cloudpickle as _cp
+
+        started = time.perf_counter()
+        model = _get_or_build_model(self._cache_key, self._model_factory_bytes)
+        if self._fp16:
+            state_dict = _align_dtype_in_place(model, state_dict)
+        model.load_state_dict(state_dict)
+        model.eval()
+        eval_fn = _cp.loads(self._eval_fn_bytes)
+        eval_payload = _cp.loads(self._eval_payload_bytes)
+        metrics = eval_fn(model, eval_payload)
+        if isinstance(metrics, dict):
+            metrics = dict(metrics)
+            metrics["epoch"] = epoch
+            metrics["elapsed_secs"] = time.perf_counter() - started
+        return metrics
 
     def _dispatch(self, state_bytes: bytes, epoch: int) -> dict:
         started = time.perf_counter()
