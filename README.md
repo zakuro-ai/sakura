@@ -1,209 +1,182 @@
-<h1 align="center">
-  <br>
-  <img src="https://drive.google.com/uc?id=1Mz2WqXHrwEOjwtWfJVHV7NiRwC_64Shh">
-</h1>
+<h1 align="center">Sakura</h1>
+
 <p align="center">
-  <a href="#modules">Modules</a> •
-  <a href="#code-structure">Code structure</a> •
-  <a href="#code-design">Code design</a> •
-  <a href="#installing-the-application">Installing the application</a> •
-  <a href="#makefile-commands">Makefile commands</a> •
-  <a href="#environments">Environments</a> •
-  <a href="#running-the-application">Running the application</a>
+  ML-framework integrations for <a href="https://github.com/zakuro-ai/zakuro">Zakuro</a> —
+  hide evaluation, logging, and checkpointing behind training so the main loop never waits.
 </p>
 
+<p align="center">
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#pytorch-lightning">Lightning</a> •
+  <a href="#huggingface-trainer">HuggingFace</a> •
+  <a href="#tensorflow--keras">TensorFlow</a> •
+  <a href="#benchmarks--notebooks">Benchmarks</a>
+</p>
 
 --------------------------------------------------------------------------------
 
-Sakura is a simple but powerfull tool to reduce training time by running the train/test asynchronously. It provides two features:
-- A simple ML framework for asynchronous training.
-- An integration with PyTorch. 
+## What is Sakura?
 
+Sakura wraps the framework you're already using (PyTorch Lightning, HuggingFace `Trainer`, TensorFlow `Model.fit`) with a callback that **dispatches evaluation to a [Zakuro](https://github.com/zakuro-ai/zakuro) worker** instead of running it inline. Training keeps stepping while eval runs on a side pool; metrics come back through a non-blocking queue.
 
-You can reuse your favorite Python framework such as Pytorch, Tensorflow or PaddlePaddle.
+The old Sakura used MPI + Redis for this plumbing. The current Sakura uses Zakuro — one `@zk.fn` dispatch per epoch, shared connection, context-aware allocation across a pool of workers. No MPI, no Redis, no `SAKURA_ROLE` fork.
 
+## Quick start
 
-# Modules
+### Laptop-only (no worker setup)
 
-At a granular level, Sakura is a library that consists of the following components:
-
-| Component | Description |
-| ---- | --- |
-| **sakura** | Contains the sakura modules. |
-| **sakura.ml** | Contains the code related to ml processing |
-
-
-
-# Code structure
 ```python
-from setuptools import setup
-from sakura import __version__
-
-setup(
-    name="sakura-ml",
-    version=__version__,
-    short_description="Sakura provides asynchronous training for DNN.",
-    long_description="Sakura provides asynchronous training for DNN.",
-    url='https://zakuro.ai',
-    packages=[
-        "sakura",
-        "sakura.lightning",
-    ],
-    include_package_data=True,
-    package_data={"": ["*.yml"]},
-    install_requires=[r.rsplit()[0] for r in open("requirements.txt")],
-    license='MIT',
-    author='ZakuroAI',
-    python_requires='>=3.6',
-    author_email='git@zakuro.ai',
-    description='Sakura provides asynchronous training for DNN.',
-    platforms="linux_debian_10_x86_64",
-    classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
-    ]
-)
-```
-# Code design
-If you worked with PyTorch in your project your would find a common structure. 
-Simply change the `test` and `train` in your trainer as shown in `mnist_demo`. 
-```python
-import os
 import lightning as L
-import torch
-from torch import nn
-from torch.nn import functional as F
-from torch.utils.data import DataLoader
-from torchvision import transforms
-from torchvision.datasets import MNIST
-import argparse
 from sakura.lightning import SakuraTrainer
 
-
-class MNISTModel(L.LightningModule):
-    def __init__(self):
-        super(MNISTModel, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, 3, 1)
-        self.conv2 = nn.Conv2d(32, 64, 3, 1)
-        self.dropout1 = nn.Dropout(0.25)
-        self.dropout2 = nn.Dropout(0.5)
-        self.fc1 = nn.Linear(9216, 128)
-        self.fc2 = nn.Linear(128, 10)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = F.relu(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = F.max_pool2d(x, 2)
-        x = self.dropout1(x)
-        x = torch.flatten(x, 1)
-        x = self.fc1(x)
-        x = F.relu(x)
-        x = self.dropout2(x)
-        x = self.fc2(x)
-        output = F.log_softmax(x, dim=1)
-        return output
-
-    def training_step(self, batch, batch_nb):
-        x, y = batch
-        loss = F.cross_entropy(self(x), y)
-        return loss
-
-    def validation_step(self, batch, batch_nb):
-        with torch.no_grad():
-            x, y = batch
-            loss = F.cross_entropy(self(x), y)
-        return loss
-
-    def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=0.02)
-
-
-if __name__ == "__main__":
-    PATH_DATASETS = os.environ.get("PATH_DATASETS", ".")
-    BATCH_SIZE = 2000 if torch.cuda.is_available() else 64
-    # Init our model
-    mnist_model = MNISTModel()
-
-    # Init DataLoader from MNIST Dataset
-    train_ds = MNIST(
-        PATH_DATASETS, train=True, download=True, transform=transforms.ToTensor()
-    )
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE)
-
-    # Init DataLoader from MNIST Dataset
-    val_ds = MNIST(
-        PATH_DATASETS, train=False, download=True, transform=transforms.ToTensor()
-    )
-    val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE)
-
-    trainer = SakuraTrainer(
-        accelerator="auto",
-        max_epochs=10,
-    )
-
-    trainer.run(
-        mnist_model, train_loader, val_loader, model_path="models/best_model.pth"
-    )
-
+trainer = SakuraTrainer(
+    max_epochs=10,
+    accelerator="auto",
+    model_factory=MyLightningModule,     # rebuilds on the eval worker
+    val_loader_factory=lambda: val_loader,
+)
+trainer.run(model, train_loader)          # val_compute=None → Zakuro standalone fallback
 ```
 
-# Installing the application
-To clone and run this application, you'll need the following installed on your computer:
-- [Git](https://git-scm.com)
-- Docker Desktop
-   - [Install Docker Desktop on Mac](https://docs.docker.com/docker-for-mac/install/)
-   - [Install Docker Desktop on Windows](https://docs.docker.com/desktop/install/windows-install/)
-   - [Install Docker Desktop on Linux](https://docs.docker.com/desktop/install/linux-install/)
-- [Python](https://www.python.org/downloads/)
+No `zakuro-worker` needed — the eval runs in-process via Zakuro's standalone fallback, but the async dispatch pattern still works.
 
-### Clone the code and install the binary
-```bash
-# Clone this repository and install the code
-git clone https://github.com/zakuro-ai/sakura
+### HuggingFace `Trainer` with a real worker
 
-# Go into the repository
-cd sakura
+```python
+from transformers import Trainer, TrainingArguments
+from sakura.huggingface import SakuraHFCallback
+import zakuro as zk
 
-# Update global variables
-source .env
-
-# Install sakura
-curl https://get.zakuro.ai/sakura/install | sh
+trainer = Trainer(
+    model=model,
+    args=TrainingArguments(..., eval_strategy="no"),   # we handle eval
+    train_dataset=train_ds,
+    callbacks=[
+        SakuraHFCallback(
+            model_factory=lambda: AutoModelForSequenceClassification.from_config(config),
+            eval_fn=my_eval_fn,
+            eval_payload=(val_inputs, 32),
+            val_compute=zk.Compute(uri="quic://worker:4433"),
+            fp16_state_dict=True,
+            on_backpressure="skip",
+        )
+    ],
+)
+trainer.train()
 ```
 
-### Check that the binary has been downloaded
-```bash
-which sakura
-```
+`on_backpressure="skip"` makes the callback consult `AdaptiveCompute.is_backpressured()` before every dispatch — if the allocator reports saturation (the slow eval worker can't keep up), that epoch's eval is dropped rather than blocking training.
 
-# Running the application
+## Installation
 
 ```bash
-sakura main.py
-```
-You should be able to see this output with no delay between epochs (asynchronous testing).
-```
-   _____           _                               __  __   _      
-  / ____|         | |                             |  \/  | | |     
- | (___     __ _  | | __  _   _   _ __    __ _    | \  / | | |     
-  \___ \   / _` | | |/ / | | | | | '__|  / _` |   | |\/| | | |     
-  ____) | | (_| | |   <  | |_| | | |    | (_| |   | |  | | | |____ 
- |_____/   \__,_| |_|\_\  \__,_| |_|     \__,_|   |_|  |_| |______|
+# Core + HuggingFace integration
+pip install 'sakura-ml[huggingface]'
 
-(0) MNIST | Epoch: 1/10 | Acc: 0.0000 / (0.0000) | Loss:0.0000 / (0.0000): 100%|██████████| 18/18 [00:06<00:00,  2.69it/s]
-(1) MNIST | Epoch: 2/10 | Acc: 0.0000 / (0.0000) | Loss:0.0000 / (0.0000): 100%|██████████| 18/18 [00:05<00:00,  3.36it/s]
-(2) MNIST | Epoch: 3/10 | Acc: 90.4600 / (90.4600) | Loss:0.4034 / (0.4034): 100%|██████████| 18/18 [00:05<00:00,  3.42it/s]
-(3) MNIST | Epoch: 4/10 | Acc: 95.3246 / (95.3246) | Loss:0.1907 / (0.1907): 100%|██████████| 18/18 [00:05<00:00,  3.43it/s]
-(4) MNIST | Epoch: 5/10 | Acc: 96.9332 / (96.9332) | Loss:0.1379 / (0.1379): 100%|██████████| 18/18 [00:05<00:00,  3.38it/s]
-(5) MNIST | Epoch: 6/10 | Acc: 97.3693 / (97.3693) | Loss:0.1167 / (0.1167): 100%|██████████| 18/18 [00:05<00:00,  3.42it/s]
-(6) MNIST | Epoch: 7/10 | Acc: 97.7237 / (97.7237) | Loss:0.1040 / (0.1040): 100%|██████████| 18/18 [00:05<00:00,  3.41it/s]
-(7) MNIST | Epoch: 8/10 | Acc: 98.0172 / (98.0172) | Loss:0.0938 / (0.0938): 100%|██████████| 18/18 [00:05<00:00,  3.31it/s]
-(8) MNIST | Epoch: 9/10 | Acc: 98.2402 / (98.2402) | Loss:0.0886 / (0.0886): 100%|██████████| 18/18 [00:05<00:00,  3.41it/s]
+# Everything
+pip install 'sakura-ml[huggingface,tensorflow,bench]'
+
+# From source
+git clone https://github.com/zakuro-ai/sakura && cd sakura
+uv pip install -e '.[huggingface]'
 ```
 
-FYI the meaning of the above notation is:
+Zakuro is pulled transitively. For a worker (HTTP or QUIC) install the `[worker]` extra on the zakuro package.
+
+## PyTorch Lightning
+
+`sakura.lightning.SakuraTrainer` — a drop-in replacement for the async-eval case:
+
+```python
+from sakura.lightning import SakuraTrainer
+
+trainer = SakuraTrainer(
+    max_epochs=10,
+    accelerator="auto",
+    # how the eval worker rebuilds the model:
+    model_factory=lambda: MyLightningModule(),
+    # how the eval worker rebuilds the dataloader:
+    val_loader_factory=lambda: DataLoader(val_ds, batch_size=256),
+    # optional: where to run eval
+    val_compute=zk.Compute(uri="quic://eval-worker:4433"),
+    # optional: where to save the best-loss checkpoint
+    model_path="checkpoints/best.pth",
+)
+trainer.run(model, train_loader)
+
+print(trainer.history)         # [{epoch, val_loss, worker_name, elapsed_secs}, ...]
+print(trainer.best_val_loss)
 ```
-([best_epoch]) [name_exp] | Epoch: [current]/[total] | Acc: [current_test_acc] / ([best_test_acc]) | Loss:[current_test_loss] / ([best_test_loss]): 100%|███| [batch_k]/[batch_n] [[time_train]<[time_left], [it/s]]
+
+## HuggingFace Trainer
+
+`sakura.huggingface.SakuraHFCallback` is a `transformers.TrainerCallback` that cloudpickles `state_dict` on `on_epoch_end`, dispatches a remote eval, and lazily reaps futures as they finish. Knobs:
+
+| parameter | what it does |
+|---|---|
+| `model_factory` | how the eval worker rebuilds the architecture (weights stream in from the callback) |
+| `eval_fn(model, payload)` | the eval routine itself — runs on the worker, returns a `dict` of metrics |
+| `eval_payload` | anything cloudpickle can serialise — dataset, tokenizer, batch size |
+| `val_compute` | `zk.Compute` or `zk.AdaptiveCompute`; `None` → standalone |
+| `drain="lazy"` *(default)* / `"strict"` | whether `on_epoch_end` blocks to reap the previous future |
+| `cache_key=...` | keep the validator model architecture warm on the worker |
+| `fp16_state_dict=True` | halve the wire bytes |
+| `async_copy=True` *(default, CUDA-only)* | GPU→CPU snapshot on a dedicated stream, ~170 → 75 ms per epoch on x399 4090 |
+| `on_backpressure={"skip","queue","block"}` | policy when `AdaptiveCompute` reports saturation |
+| `max_pending` | cap on in-flight evaluations |
+
+In-memory fast path is **automatic**: when `val_compute` resolves to standalone, `torch.save`/`torch.load` are skipped entirely — measured +23.6 % wall on a 3-epoch distilbert fine-tune vs forced serialisation.
+
+## TensorFlow / Keras
+
+`sakura.tensorflow.SakuraKerasCallback` — a `tf.keras.callbacks.Callback` with the same pattern:
+
+```python
+from sakura.tensorflow import SakuraKerasCallback
+
+model.fit(
+    x_train, y_train,
+    epochs=10,
+    callbacks=[SakuraKerasCallback(
+        model_factory=lambda: tf.keras.Sequential([...]),
+        val_fn=lambda m, p: m.evaluate(*p, verbose=0, return_dict=True),
+        val_payload=(x_val, y_val),
+        val_compute=zk.Compute(uri="quic://eval-worker:4433"),
+    )],
+)
 ```
+
+Weights are transferred as numpy arrays via `get_weights()` / `set_weights()` — clean cloudpickle, no TF graph-state serialisation.
+
+## Generic async trainer (framework-agnostic)
+
+`sakura.ml.async_trainer.AsyncTrainer` — for training loops that aren't Lightning / HF / Keras. Takes any object implementing `train(loader)`, `serialized_state_dict()`, `_epochs`, `_metrics`, plus a `model_factory` and `test_fn(model) -> dict`. Same dispatch mechanics.
+
+## Benchmarks & notebooks
+
+- **[`bert_demo/hf_async_features.ipynb`](bert_demo/hf_async_features.ipynb)** — every `SakuraHFCallback` knob exercised on distilbert / SST-2. Runs in ~1 min on a laptop. Verified via `jupyter nbconvert --execute`.
+- **[`bert_demo/bench_bert.py`](bert_demo/bench_bert.py)** — serial `Trainer` vs Sakura async, configurable.
+- **[`bert_demo/bench_in_memory_handle.py`](bert_demo/bench_in_memory_handle.py)** — A/B the in-memory-handle fast path against `torch.save`. +23.6 % end-to-end measured.
+
+## Measured performance wins (distilbert-base-uncased, 268 MB state_dict)
+
+| slice | before | after | measured on |
+|---|---|---|---|
+| blocking `.cpu()` → async CUDA-stream copy | 176 ms / epoch main-thread | **75 ms** / epoch | x399 4090 |
+| cloudpickle → `torch.save` for state_dict | 482 ms / epoch pool | **282 ms** / epoch | x399 CPU |
+| in-memory handle for standalone | 9.12 s wall (3 epochs) | **7.59 s** | Mac MPS |
+
+See [`zakuro/PLAN.md`](https://github.com/zakuro-ai/zakuro/blob/master/PLAN.md#measured-results-so-far) for the consolidated numbers across both repos.
+
+## Development
+
+```bash
+git clone https://github.com/zakuro-ai/sakura && cd sakura
+uv pip install -e '.[bench]'
+uv run pytest tests/
+```
+
+## License
+
+BSD-3-Clause.
