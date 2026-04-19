@@ -24,7 +24,7 @@ dependencies = [
     # Zakuro replaces the former MPI + Redis transport: per-epoch validation
     # is dispatched to a Zakuro worker via @zk.fn instead of a second MPI rank.
     # Pulled from git until the 0.2.x series is published to PyPI.
-    "zakuro-ai @ git+https://github.com/zakuro-ai/zakuro.git@feat/adaptive-compute",
+    "zakuro-ai @ git+https://github.com/zakuro-ai/zakuro.git@master",
 ]
 classifiers = [
     "Intended Audience :: Developers",
