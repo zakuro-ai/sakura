@@ -20,3 +20,4 @@ dump.rdb
 *.rdb
 .env
 models/
+.coverage
