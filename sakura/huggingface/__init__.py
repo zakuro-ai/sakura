@@ -1,50 +1,33 @@
 """Sakura + HuggingFace ``Trainer`` — async evaluation over Zakuro.
 
 The standard ``transformers.Trainer`` blocks training on every evaluation
-phase: one epoch trains, then the same process runs the full eval loop
-before the next epoch starts. For long eval passes (large validation sets,
-metric computation with ``evaluate``) this can eat 20–50% of end-to-end
-wall time.
+phase. ``SakuraHFCallback`` turns evaluation into a non-blocking Zakuro
+dispatch: at the end of each training epoch the current model state is
+cloudpickled and submitted to a ``ThreadPoolExecutor``; the future is
+reaped when convenient (configurable) so evaluation overlaps with
+subsequent training passes.
 
-``SakuraHFCallback`` turns evaluation into a non-blocking Zakuro dispatch:
-at the end of each training epoch the current model state is cloudpickled
-and submitted to a ``ThreadPoolExecutor``; the future is reaped at the
-start of the next epoch so eval overlaps with the next training pass.
+Key performance knobs:
 
-Usage::
-
-    from transformers import Trainer, TrainingArguments
-    from sakura.huggingface import SakuraHFCallback
-    import zakuro as zk
-
-    def model_factory():
-        return AutoModelForSequenceClassification.from_pretrained("bert-base-uncased")
-
-    def eval_fn(model, eval_dataset_bytes):
-        # Rebuild the dataloader on the worker side, run model.eval(), return metrics.
-        ...
-
-    trainer = Trainer(
-        model=model,
-        args=TrainingArguments(..., eval_strategy="no"),  # disable built-in eval
-        train_dataset=train_ds,
-        callbacks=[
-            SakuraHFCallback(
-                val_compute=zk.Compute(uri="quic://worker:4433"),
-                model_factory=model_factory,
-                eval_fn=eval_fn,
-                eval_dataset=val_ds,
-            )
-        ],
-    )
-    trainer.train()
+- ``drain="lazy"`` (default): at ``on_epoch_end`` only reap futures that
+  are *already done*; never block on pending ones. The final drain happens
+  in ``on_train_end``. Training wall time stays ≈ N × T even when eval is
+  slower than training.
+- ``drain="strict"``: reap each future at the *next* ``on_epoch_end`` (the
+  original pre-v0.2 behaviour). Useful if downstream code needs metrics
+  in epoch order and is OK paying the wait.
+- ``cache_key``: when set, the worker caches the model architecture in a
+  module-level dict and reuses it across epochs. Eliminates the per-epoch
+  ``model_from_config`` + ``load_state_dict_into_new_module`` cost.
+- ``fp16_state_dict=True``: cast weights to ``fp16`` before transfer (cast
+  back on the worker). Halves network bytes for fp32 models.
 """
 
 from __future__ import annotations
 
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 import cloudpickle
 
@@ -60,8 +43,13 @@ import zakuro as zk
 
 
 # ---------------------------------------------------------------------------
-# Remote evaluation primitive
+# Remote evaluation primitive — with persistent-validator cache
 # ---------------------------------------------------------------------------
+
+# Worker-side cache keyed by ``cache_key`` (per ModelFactory shape). Lives in
+# the worker process's module globals, so subsequent calls reuse the model
+# without re-instantiating the architecture.
+_WORKER_MODEL_CACHE: dict[str, Any] = {}
 
 
 @zk.fn
@@ -70,27 +58,42 @@ def _remote_evaluate(
     model_factory_bytes: bytes,
     eval_fn_bytes: bytes,
     eval_payload_bytes: bytes,
+    cache_key: Optional[str] = None,
+    fp16: bool = False,
 ) -> dict:
     """Run the user-supplied eval function on the worker.
 
-    The caller cloudpickles:
-      - ``state_bytes``         — serialized ``model.state_dict()``
-      - ``model_factory_bytes`` — ``() -> nn.Module`` rebuilding the architecture
-      - ``eval_fn_bytes``       — ``(model, eval_payload) -> dict`` returning metrics
-      - ``eval_payload_bytes``  — whatever the eval_fn needs (dataset, tokenizer, …)
+    When ``cache_key`` is provided the module-level ``_WORKER_MODEL_CACHE``
+    stores the instantiated model keyed by that string. First call for a key
+    runs the factory; subsequent calls reuse the cached architecture and only
+    ``load_state_dict`` is repeated.
 
-    The ``eval_fn`` signature is intentionally opaque so callers can pass their
-    own evaluation pipeline (e.g. HuggingFace ``evaluate.load("accuracy")``,
-    custom metrics, subword-aligned F1, etc.) without Sakura pinning an API.
+    When ``fp16`` is ``True`` the state_dict arrives in half precision; the
+    worker upcasts each tensor to the model's native dtype on ``load``.
     """
     import cloudpickle as _cp
+    import torch as _torch
 
     state_dict = _cp.loads(state_bytes)
-    model_factory = _cp.loads(model_factory_bytes)
     eval_fn = _cp.loads(eval_fn_bytes)
     eval_payload = _cp.loads(eval_payload_bytes)
 
-    model = model_factory()
+    if cache_key is not None and cache_key in _WORKER_MODEL_CACHE:
+        model = _WORKER_MODEL_CACHE[cache_key]
+    else:
+        model_factory = _cp.loads(model_factory_bytes)
+        model = model_factory()
+        if cache_key is not None:
+            _WORKER_MODEL_CACHE[cache_key] = model
+
+    if fp16:
+        # Upcast to the model's existing parameter dtype on load.
+        target_dtype = next(model.parameters()).dtype
+        state_dict = {
+            k: (v.to(target_dtype) if hasattr(v, "to") else v)
+            for k, v in state_dict.items()
+        }
+
     model.load_state_dict(state_dict)
     model.eval()
 
@@ -113,17 +116,27 @@ class SakuraHFCallback(TrainerCallback):
         closures also work via cloudpickle).
     eval_fn:
         Callable ``(model, eval_payload) -> dict[str, float]`` that runs the
-        evaluation pass on the worker and returns metrics. Free to use
-        HuggingFace datasets, torch dataloaders, or anything else installed on
-        the worker.
+        evaluation pass on the worker and returns metrics.
     eval_payload:
-        Opaque object passed to ``eval_fn`` as the second argument. Typically
-        the validation dataset (serialised via cloudpickle). Keeping it opaque
-        lets the caller pass whatever shape their ``eval_fn`` expects without
-        Sakura making assumptions.
+        Opaque object passed to ``eval_fn``. Shipped via cloudpickle.
     val_compute:
-        Zakuro compute target. ``None`` → Zakuro's standalone (in-process)
-        fallback, useful for local benchmarks.
+        Zakuro compute target. ``None`` → standalone (in-process) fallback.
+    drain:
+        ``"lazy"`` (default) — only reap already-done futures at each
+        ``on_epoch_end``; never block. ``"strict"`` — block at each
+        ``on_epoch_end`` until the previous future is ready.
+    cache_key:
+        Identifier for the persistent model cache on the worker. When set,
+        the validator architecture is reused across epochs. Default
+        ``"default"`` (per-callback instance). Set to ``None`` to disable
+        caching.
+    fp16_state_dict:
+        Ship model weights in half precision. Halves network bytes for
+        fp32 models; the worker upcasts on ``load``.
+    max_pending:
+        Cap on the number of in-flight evaluations. When the cap is reached
+        ``on_epoch_end`` blocks on the oldest future (acts like strict for
+        that one call) to keep memory bounded.
     verbose:
         Print each epoch's metrics when ready (default True).
     """
@@ -135,16 +148,27 @@ class SakuraHFCallback(TrainerCallback):
         eval_fn: Callable[[Any, Any], dict],
         eval_payload: Any,
         val_compute: Optional[zk.Compute] = None,
+        drain: Literal["lazy", "strict"] = "lazy",
+        cache_key: Optional[str] = "default",
+        fp16_state_dict: bool = False,
+        max_pending: int = 4,
         verbose: bool = True,
     ) -> None:
         self._compute = val_compute if val_compute is not None else zk.Compute()
         self._model_factory_bytes = cloudpickle.dumps(model_factory)
         self._eval_fn_bytes = cloudpickle.dumps(eval_fn)
         self._eval_payload_bytes = cloudpickle.dumps(eval_payload)
+        self._drain_mode = drain
+        self._cache_key = cache_key
+        self._fp16 = fp16_state_dict
+        self._max_pending = max(1, int(max_pending))
         self._verbose = verbose
 
-        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sakura-hf-eval")
-        self._pending: Optional[Future] = None
+        self._pool = ThreadPoolExecutor(
+            max_workers=self._max_pending,
+            thread_name_prefix="sakura-hf-eval",
+        )
+        self._pending: list[tuple[int, Future]] = []
         self._history: list[dict] = []
 
     # .................................................................. API
@@ -156,21 +180,40 @@ class SakuraHFCallback(TrainerCallback):
     # ........................................................ HF hooks
 
     def on_epoch_end(self, args, state, control, **kwargs):  # noqa: ARG002
-        # Drain previous future before dispatching the new one so logs stay
-        # in order and pending state doesn't grow.
-        self._drain(state)
+        self._collect_done(state)
+
+        # Respect max_pending: if we've already got that many in flight,
+        # block on the oldest one to keep memory bounded.
+        if len(self._pending) >= self._max_pending:
+            self._drain_oldest(state)
+        # Strict mode always blocks on oldest at every epoch.
+        elif self._drain_mode == "strict" and self._pending:
+            self._drain_oldest(state)
 
         model = kwargs.get("model")
         if model is None:
             return
-        state_bytes = cloudpickle.dumps(
-            {k: v.detach().cpu() for k, v in model.state_dict().items()}
-        )
+
+        state_dict = {
+            k: v.detach().cpu() for k, v in model.state_dict().items()
+        }
+        if self._fp16:
+            import torch as _torch
+
+            state_dict = {
+                k: (v.to(_torch.float16) if v.dtype == _torch.float32 else v)
+                for k, v in state_dict.items()
+            }
+        state_bytes = cloudpickle.dumps(state_dict)
+
         epoch = int(state.epoch) if state.epoch is not None else len(self._history)
-        self._pending = self._pool.submit(self._dispatch, state_bytes, epoch)
+        fut = self._pool.submit(self._dispatch, state_bytes, epoch)
+        self._pending.append((epoch, fut))
 
     def on_train_end(self, args, state, control, **kwargs):  # noqa: ARG002
-        self._drain(state)
+        # Drain everything still outstanding.
+        while self._pending:
+            self._drain_oldest(state)
         self._pool.shutdown(wait=True)
 
     # ............................................................. internals
@@ -182,6 +225,8 @@ class SakuraHFCallback(TrainerCallback):
             self._model_factory_bytes,
             self._eval_fn_bytes,
             self._eval_payload_bytes,
+            self._cache_key,
+            self._fp16,
         )
         if isinstance(metrics, dict):
             metrics = dict(metrics)
@@ -189,23 +234,34 @@ class SakuraHFCallback(TrainerCallback):
             metrics["elapsed_secs"] = time.perf_counter() - started
         return metrics
 
-    def _drain(self, state) -> None:
-        if self._pending is None:
+    def _collect_done(self, state) -> None:
+        """Reap any futures that happen to be ready; don't block."""
+        still_pending: list[tuple[int, Future]] = []
+        for epoch, fut in self._pending:
+            if fut.done():
+                self._record(fut.result(), state)
+            else:
+                still_pending.append((epoch, fut))
+        self._pending = still_pending
+
+    def _drain_oldest(self, state) -> None:
+        if not self._pending:
             return
-        result = self._pending.result()
-        self._pending = None
-        if isinstance(result, dict):
-            self._history.append(result)
-            # Publish the metrics into HF's log history so downstream tooling
-            # (TrainerState, WandB, MLflow, …) sees them.
-            if hasattr(state, "log_history") and state.log_history is not None:
-                state.log_history.append(dict(result))
-            if self._verbose:
-                fmt = " ".join(
-                    f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
-                    for k, v in result.items()
-                )
-                print(f"[Sakura-HF] {fmt}")
+        _, fut = self._pending.pop(0)
+        self._record(fut.result(), state)
+
+    def _record(self, result: Any, state) -> None:
+        if not isinstance(result, dict):
+            return
+        self._history.append(result)
+        if hasattr(state, "log_history") and state.log_history is not None:
+            state.log_history.append(dict(result))
+        if self._verbose:
+            fmt = " ".join(
+                f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
+                for k, v in result.items()
+            )
+            print(f"[Sakura-HF] {fmt}")
 
 
 __all__ = ["SakuraHFCallback"]
