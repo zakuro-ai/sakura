@@ -137,6 +137,18 @@ class SakuraHFCallback(TrainerCallback):
         Cap on the number of in-flight evaluations. When the cap is reached
         ``on_epoch_end`` blocks on the oldest future (acts like strict for
         that one call) to keep memory bounded.
+    on_backpressure:
+        Behaviour when ``val_compute`` is an ``AdaptiveCompute`` and its
+        ``is_backpressured()`` returns ``True`` at dispatch time. One of:
+
+        - ``"skip"`` (default): do not dispatch this epoch's eval. Training
+          wall time stays capped at ≈ ``N × T``. A row with
+          ``{"skipped": True}`` is appended to ``history`` so downstream
+          code can see the miss.
+        - ``"queue"``: dispatch regardless (the original behaviour). Use
+          when you want every epoch's metrics at the cost of wall time.
+        - ``"block"``: drain the oldest pending future first, freeing a
+          slot, then dispatch. Balances throughput against memory.
     verbose:
         Print each epoch's metrics when ready (default True).
     """
@@ -147,11 +159,12 @@ class SakuraHFCallback(TrainerCallback):
         model_factory: Callable[[], Any],
         eval_fn: Callable[[Any, Any], dict],
         eval_payload: Any,
-        val_compute: Optional[zk.Compute] = None,
+        val_compute: Optional[Any] = None,  # Compute or AdaptiveCompute
         drain: Literal["lazy", "strict"] = "lazy",
         cache_key: Optional[str] = "default",
         fp16_state_dict: bool = False,
         max_pending: int = 4,
+        on_backpressure: Literal["skip", "queue", "block"] = "skip",
         verbose: bool = True,
     ) -> None:
         self._compute = val_compute if val_compute is not None else zk.Compute()
@@ -162,6 +175,7 @@ class SakuraHFCallback(TrainerCallback):
         self._cache_key = cache_key
         self._fp16 = fp16_state_dict
         self._max_pending = max(1, int(max_pending))
+        self._backpressure_policy = on_backpressure
         self._verbose = verbose
 
         self._pool = ThreadPoolExecutor(
@@ -194,6 +208,23 @@ class SakuraHFCallback(TrainerCallback):
         if model is None:
             return
 
+        epoch = int(state.epoch) if state.epoch is not None else len(self._history)
+
+        # Adaptive backpressure: if the allocator tells us every worker is
+        # saturated, honour the configured policy before paying the
+        # cloudpickle cost of packaging the state_dict.
+        if (
+            hasattr(self._compute, "is_backpressured")
+            and self._compute.is_backpressured()
+        ):
+            if self._backpressure_policy == "skip":
+                skipped = {"epoch": epoch, "skipped": True}
+                self._record(skipped, state)
+                return
+            if self._backpressure_policy == "block" and self._pending:
+                self._drain_oldest(state)
+            # "queue" falls through to the normal dispatch below.
+
         state_dict = {
             k: v.detach().cpu() for k, v in model.state_dict().items()
         }
@@ -206,7 +237,6 @@ class SakuraHFCallback(TrainerCallback):
             }
         state_bytes = cloudpickle.dumps(state_dict)
 
-        epoch = int(state.epoch) if state.epoch is not None else len(self._history)
         fut = self._pool.submit(self._dispatch, state_bytes, epoch)
         self._pending.append((epoch, fut))
 
