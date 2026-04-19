@@ -1,0 +1,67 @@
+name: Auto-release
+
+# On master push: bump patch, tag, create release. publish.yml picks it
+# up and ships the wheel to PyPI.
+
+on:
+  push:
+    branches: [master, main]
+    paths-ignore:
+      - "**.md"
+      - "bert_demo/**.ipynb"
+      - "mnist_demo/**"
+      - ".github/workflows/*.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  bump-and-release:
+    if: "!contains(github.event.head_commit.message, '[skip release]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          set -euo pipefail
+          CURRENT=$(grep -E '^__version__ = ' sakura/__init__.py | sed -E 's/.*"([^"]+)".*/\1/')
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          NEW="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          echo "  current: $CURRENT"
+          echo "  new    : $NEW"
+          sed -i.bak -E "s/^__version__ = \".*\"/__version__ = \"$NEW\"/" sakura/__init__.py
+          sed -i.bak -E "s/^version = \".*\"/version = \"$NEW\"/" pyproject.toml
+          rm sakura/__init__.py.bak pyproject.toml.bak
+          echo "new_version=$NEW" >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+
+      - name: Commit + tag
+        run: |
+          set -euo pipefail
+          git add sakura/__init__.py pyproject.toml
+          git commit -m "chore(release): v${{ steps.bump.outputs.new_version }} [skip release]"
+          git tag "${{ steps.bump.outputs.tag }}"
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin "${{ steps.bump.outputs.tag }}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.bump.outputs.tag }}" \
+            --title "${{ steps.bump.outputs.tag }}" \
+            --generate-notes
