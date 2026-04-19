@@ -3175,7 +3175,7 @@ requires-dist = [
     { name = "torchvision" },
     { name = "tqdm", specifier = ">=4.64.0" },
     { name = "transformers", marker = "extra == 'huggingface'", specifier = ">=4.40.0" },
-    { name = "zakuro-ai", git = "https://github.com/zakuro-ai/zakuro.git?rev=master" },
+    { name = "zakuro-ai", git = "https://github.com/zakuro-ai/zakuro.git?rev=feat%2Fadaptive-compute" },
 ]
 provides-extras = ["huggingface", "tensorflow", "bench"]
 
@@ -3987,7 +3987,7 @@ wheels = [
 [[package]]
 name = "zakuro-ai"
 version = "0.2.2"
-source = { git = "https://github.com/zakuro-ai/zakuro.git?rev=master#74cb46b98dc51361f8a8ffb8a53a0853d51b487c" }
+source = { git = "https://github.com/zakuro-ai/zakuro.git?rev=feat%2Fadaptive-compute#bb32c990ef36ec0e14b2cd14cb042edb3d1b12d5" }
 dependencies = [
     { name = "cloudpickle" },
     { name = "httpx" },
