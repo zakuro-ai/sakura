@@ -23,8 +23,7 @@ dependencies = [
     "charset-normalizer==3.1.0",
     # Zakuro replaces the former MPI + Redis transport: per-epoch validation
     # is dispatched to a Zakuro worker via @zk.fn instead of a second MPI rank.
-    # Pulled from git until the 0.2.x series is published to PyPI.
-    "zakuro-ai @ git+https://github.com/zakuro-ai/zakuro.git@master",
+    "zakuro-ai>=0.2.3",
 ]
 classifiers = [
     "Intended Audience :: Developers",
