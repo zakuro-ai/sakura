@@ -225,19 +225,17 @@ class SakuraHFCallback(TrainerCallback):
                 self._drain_oldest(state)
             # "queue" falls through to the normal dispatch below.
 
-        state_dict = {
+        # Snapshot the weights on the main thread (must happen now — next
+        # epoch's training would otherwise mutate them in place) but defer
+        # the fp16 conversion and cloudpickle serialisation to the worker
+        # thread. For large models the dumps alone is 1–3 s and was
+        # previously blocking the training loop.
+        state_dict_snapshot = {
             k: v.detach().cpu() for k, v in model.state_dict().items()
         }
-        if self._fp16:
-            import torch as _torch
-
-            state_dict = {
-                k: (v.to(_torch.float16) if v.dtype == _torch.float32 else v)
-                for k, v in state_dict.items()
-            }
-        state_bytes = cloudpickle.dumps(state_dict)
-
-        fut = self._pool.submit(self._dispatch, state_bytes, epoch)
+        fut = self._pool.submit(
+            self._dispatch_with_snapshot, state_dict_snapshot, epoch
+        )
         self._pending.append((epoch, fut))
 
     def on_train_end(self, args, state, control, **kwargs):  # noqa: ARG002
@@ -247,6 +245,22 @@ class SakuraHFCallback(TrainerCallback):
         self._pool.shutdown(wait=True)
 
     # ............................................................. internals
+
+    def _dispatch_with_snapshot(self, state_dict_snapshot: dict, epoch: int) -> dict:
+        """Run on the worker thread: fp16 cast + cloudpickle + remote call.
+
+        Keeps the main thread free to keep training while we package the
+        (large) state dict.
+        """
+        if self._fp16:
+            import torch as _torch
+
+            state_dict_snapshot = {
+                k: (v.to(_torch.float16) if v.dtype == _torch.float32 else v)
+                for k, v in state_dict_snapshot.items()
+            }
+        state_bytes = cloudpickle.dumps(state_dict_snapshot)
+        return self._dispatch(state_bytes, epoch)
 
     def _dispatch(self, state_bytes: bytes, epoch: int) -> dict:
         started = time.perf_counter()
