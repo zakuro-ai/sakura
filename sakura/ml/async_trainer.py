@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import pickle
+import cloudpickle
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Optional
@@ -26,7 +26,7 @@ def _remote_test(
 
     Returning a plain dict keeps the protocol framework-agnostic.
     """
-    import pickle as _pickle
+    import cloudpickle as _pickle
 
     state_dict = _pickle.loads(state_bytes)
     model_factory = _pickle.loads(model_factory_bytes)
@@ -71,8 +71,8 @@ class AsyncTrainer:
     ) -> None:
         self._trainer = trainer
         self._compute = val_compute if val_compute is not None else zk.Compute()
-        self._model_factory_bytes = pickle.dumps(model_factory)
-        self._test_fn_bytes = pickle.dumps(test_fn)
+        self._model_factory_bytes = cloudpickle.dumps(model_factory)
+        self._test_fn_bytes = cloudpickle.dumps(test_fn)
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sakura-test")
         self._pending: Optional[Future] = None
 
@@ -97,7 +97,7 @@ class AsyncTrainer:
                 # Some Trainer implementations return already-pickled bytes;
                 # others return a dict. Accept either and normalize to bytes.
                 if not isinstance(state_bytes, (bytes, bytearray)):
-                    state_bytes = pickle.dumps(state_bytes)
+                    state_bytes = cloudpickle.dumps(state_bytes)
                 self._pending = self._pool.submit(
                     self._dispatch,
                     bytes(state_bytes),

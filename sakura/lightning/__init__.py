@@ -35,7 +35,7 @@ without a second worker.
 from __future__ import annotations
 
 import os
-import pickle
+import cloudpickle
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Optional
@@ -67,7 +67,7 @@ def _remote_validate(
     intentionally plain PyTorch — no Lightning process on the worker side —
     to keep the remote footprint small.
     """
-    import pickle as _pickle
+    import cloudpickle as _pickle
 
     import torch as _torch
     import torch.nn.functional as F
@@ -122,8 +122,8 @@ class SakuraLightningCallback(Callback):
     ) -> None:
         super().__init__()
         self._compute = compute
-        self._model_factory_bytes = pickle.dumps(model_factory)
-        self._val_loader_factory_bytes = pickle.dumps(val_loader_factory)
+        self._model_factory_bytes = cloudpickle.dumps(model_factory)
+        self._val_loader_factory_bytes = cloudpickle.dumps(val_loader_factory)
         self._model_path = model_path
         self._verbose = verbose
 
@@ -143,7 +143,7 @@ class SakuraLightningCallback(Callback):
         # user sees losses in order and so we don't stack pending futures.
         self._drain(trainer)
 
-        state_bytes = pickle.dumps(
+        state_bytes = cloudpickle.dumps(
             {k: v.detach().cpu() for k, v in pl_module.state_dict().items()}
         )
         epoch = trainer.current_epoch
