@@ -8,14 +8,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 # Mock heavy dependencies that are unavailable in the test environment.
 # These must be injected before any sakura module is imported.
-
-# mpi4py
-_mpi = MagicMock()
-sys.modules.setdefault("mpi4py", _mpi)
-sys.modules.setdefault("mpi4py.MPI", _mpi.MPI)
-
-# bson
-sys.modules.setdefault("bson", MagicMock())
+#
+# mpi4py / bson are no longer used (Zakuro dispatch replaces the MPI+Redis
+# transport); they're not pulled in at import time anymore so no mocks needed.
 
 # gnutools — provide a working RecNamespace so sakura.functional is testable
 class _RecNamespace(SimpleNamespace):

@@ -1,5 +1,4 @@
 import pickle
-import bson
 from collections import OrderedDict
 from sakura.ml.epoch import range
 
@@ -44,8 +43,14 @@ class SakuraTrainer:
             sd[k] = pickle.dumps(v)
         return sd
 
-    def deserialized_state_dict(self):
+    def deserialized_state_dict(self, blob: bytes) -> OrderedDict:
+        """Deserialize a state_dict produced by ``serialized_state_dict``.
+
+        The MPI+Redis transport is gone — the blob now arrives over Zakuro
+        (cloudpickle on the wire), so callers pass the raw pickled bytes
+        directly instead of fetching from Redis.
+        """
         sd = OrderedDict()
-        for k, v in bson.loads(self._r.get("model.state_dict")).items():
+        for k, v in pickle.loads(blob).items():
             sd[k] = pickle.loads(v)
         return sd

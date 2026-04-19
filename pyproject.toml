@@ -16,14 +16,15 @@ dependencies = [
     "torchvision",
     "numpy",
     "gnutools-python",
-    "mpi4py",
     "six",
-    "bson",
     "chardet",
     "lightning",
-    "redis",
     "ipython",
     "charset-normalizer==3.1.0",
+    # Zakuro replaces the former MPI + Redis transport: per-epoch validation
+    # is dispatched to a Zakuro worker via @zk.fn instead of a second MPI rank.
+    # Pulled from git until the 0.2.x series is published to PyPI.
+    "zakuro-ai @ git+https://github.com/zakuro-ai/zakuro.git@master",
 ]
 classifiers = [
     "Intended Audience :: Developers",
@@ -48,6 +49,9 @@ sakura-benchmark = "main:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["sakura"]

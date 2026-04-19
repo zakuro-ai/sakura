@@ -71,19 +71,21 @@ def run_baseline(train_loader, val_loader, epochs):
     return time.perf_counter() - t0
 
 
-def run_sakura(train_loader, val_loader, epochs):
+def run_sakura(train_loader, val_loader, epochs, val_compute=None):
     from sakura.lightning import SakuraTrainer
 
     model = MNISTModel()
-    trainer = SakuraTrainer(accelerator="auto", max_epochs=epochs)
-    t0 = time.perf_counter()
-    trainer.run(
-        model,
-        train_loader,
-        val_loader,
-        model_path="models/best_model.pth",
+    trainer = SakuraTrainer(
+        max_epochs=epochs,
+        accelerator="auto",
         default_root_dir="/tmp",
+        val_compute=val_compute,            # None → Zakuro standalone fallback
+        model_factory=MNISTModel,           # rebuilt on the worker
+        val_loader_factory=lambda: val_loader,
+        model_path="models/best_model.pth",
     )
+    t0 = time.perf_counter()
+    trainer.run(model, train_loader, val_loader)
     return time.perf_counter() - t0
 
 
@@ -98,6 +100,12 @@ def main():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--data-dir", default=os.environ.get("PATH_DATASETS", "/tmp/datasets"))
+    parser.add_argument(
+        "--val-worker",
+        default=os.environ.get("SAKURA_VAL_WORKER"),
+        help="Zakuro URI of the validation worker (e.g. quic://host:4433). "
+             "If unset, Sakura uses Zakuro's standalone fallback.",
+    )
     args = parser.parse_args()
 
     batch_size = args.batch_size or (2000 if torch.cuda.is_available() else 64)
@@ -112,7 +120,16 @@ def main():
 
     if args.mode in ("sakura", "both"):
         print(f"--- Sakura Trainer ({args.epochs} epochs) ---")
-        results["sakura"] = run_sakura(train_loader, val_loader, args.epochs)
+        val_compute = None
+        if args.val_worker:
+            import zakuro as zk
+            val_compute = zk.Compute(uri=args.val_worker)
+            print(f"    validation → {val_compute.uri}")
+        else:
+            print("    validation → zakuro standalone (in-process)")
+        results["sakura"] = run_sakura(
+            train_loader, val_loader, args.epochs, val_compute=val_compute
+        )
         print(f"Sakura:   {results['sakura']:.2f}s")
 
     if "baseline" in results and "sakura" in results:

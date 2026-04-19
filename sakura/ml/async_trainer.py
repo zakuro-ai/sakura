@@ -1,58 +1,129 @@
-import os
-from mpi4py import MPI
+"""Generic async trainer, now backed by Zakuro dispatch instead of MPI."""
+
+from __future__ import annotations
+
 import logging
-from collections import OrderedDict
 import pickle
-from gnutools.utils import RecNamespace, RecDict
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any, Callable, Optional
+
+import zakuro as zk
+
+
+@zk.fn
+def _remote_test(
+    state_bytes: bytes,
+    model_factory_bytes: bytes,
+    test_fn_bytes: bytes,
+) -> dict:
+    """Run the test phase on a Zakuro worker.
+
+    The caller cloudpickles (via ``@zk.fn``):
+      - ``state_bytes``   — the trainer's current serialized state dict
+      - ``model_factory`` — rebuilds the model in the worker process
+      - ``test_fn``       — ``def test(model) -> dict`` returning metrics
+
+    Returning a plain dict keeps the protocol framework-agnostic.
+    """
+    import pickle as _pickle
+
+    state_dict = _pickle.loads(state_bytes)
+    model_factory = _pickle.loads(model_factory_bytes)
+    test_fn = _pickle.loads(test_fn_bytes)
+
+    model = model_factory()
+    model.load_state_dict(state_dict)
+    return test_fn(model)
 
 
 class AsyncTrainer:
-    def __init__(self,
-                 trainer,
-                 ):
-        """ Initialize the distributed environment. """
-        self._comm = MPI.COMM_WORLD
-        self._rank = self._comm.Get_rank()
+    """Overlaps test phases with the next training epoch via Zakuro dispatch.
+
+    Historically this class forked into two MPI ranks; rank 0 trained while
+    rank 1 validated on exchanged state dicts. The same semantics now use a
+    single process: the test phase is shipped to a Zakuro worker and its
+    future is reaped at the start of the next epoch, so the two phases run
+    concurrently without MPI.
+
+    Parameters
+    ----------
+    trainer:
+        Any object exposing ``train(train_loader)``, ``serialized_state_dict()``,
+        ``_epochs`` (iterable), ``_epoch``, and ``_metrics`` with a writable
+        ``test`` attribute. The original ``Trainer`` class satisfies this.
+    model_factory:
+        Callable returning a fresh untrained model instance. Must be
+        cloudpickle-serialisable.
+    test_fn:
+        Callable ``(model) -> dict`` that the worker runs to produce metrics.
+    val_compute:
+        Zakuro compute target for the test phase. ``None`` → Zakuro's
+        standalone (in-process) fallback.
+    """
+
+    def __init__(
+        self,
+        trainer: Any,
+        model_factory: Callable[[], Any],
+        test_fn: Callable[[Any], dict],
+        val_compute: Optional[zk.Compute] = None,
+    ) -> None:
         self._trainer = trainer
-        self._mode = "train" if self._rank == 0 else "test"
+        self._compute = val_compute if val_compute is not None else zk.Compute()
+        self._model_factory_bytes = pickle.dumps(model_factory)
+        self._test_fn_bytes = pickle.dumps(test_fn)
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sakura-test")
+        self._pending: Optional[Future] = None
 
-    def run(self, train_loader=None, test_loader=None):
-        if self._mode == "train":
-            # Run the trainer
+    def run(self, train_loader: Any = None, test_loader: Any = None) -> None:
+        """Drive the training loop, overlapping test with next epoch's train."""
+        _ = test_loader  # unused locally; the worker rebuilds the loader itself
+        try:
             for self._trainer._epoch in self._trainer._epochs:
-                req = self._comm.irecv(source=1)
-                if req.get_status():
-                    data = req.wait()
-                    self._trainer._metrics.test = RecNamespace(
-                        data["metrics"]["test"])
-                else:
-                    req.cancel()
+                # Reap previous epoch's test result before the next train step.
+                if self._pending is not None:
+                    metrics = self._pending.result()
+                    self._pending = None
+                    try:
+                        self._trainer._metrics.test = metrics
+                    except Exception as exc:  # pragma: no cover — user metrics type
+                        logging.warning("failed to attach test metrics: %r", exc)
+
                 self._trainer.train(train_loader=train_loader)
-                self._comm.send(
-                    {
-                        "state_dict": self._trainer.serialized_state_dict(),
-                        "metrics": RecDict(self._trainer._metrics),
-                    }, dest=1)
-            self._comm.send("ACK", dest=1)
 
-        else:
-            # Run the trainer
-            for self._trainer._epoch in self._trainer._epochs:
-                sd = self._comm.recv(source=0)
-                if sd == "ACK":
-                    logging.warning("Ends")
-                    return
-                self._trainer._metrics.train = RecNamespace(
-                    sd["metrics"]["train"])
-                train_sd = sd["state_dict"]
-                self.deserialize(train_sd, self._trainer._model)
-                self._trainer.test(test_loader=test_loader)
-                self._comm.isend(
-                    {"metrics": RecDict(self._trainer._metrics)}, dest=0)
+                # Dispatch new test asynchronously.
+                state_bytes = self._trainer.serialized_state_dict()
+                # Some Trainer implementations return already-pickled bytes;
+                # others return a dict. Accept either and normalize to bytes.
+                if not isinstance(state_bytes, (bytes, bytearray)):
+                    state_bytes = pickle.dumps(state_bytes)
+                self._pending = self._pool.submit(
+                    self._dispatch,
+                    bytes(state_bytes),
+                )
+        finally:
+            if self._pending is not None:
+                try:
+                    metrics = self._pending.result(timeout=300)
+                    try:
+                        self._trainer._metrics.test = metrics
+                    except Exception:
+                        pass
+                finally:
+                    self._pending = None
+            self._pool.shutdown(wait=False)
 
-    @staticmethod
-    def deserialize(_sd, model):
-        sd = OrderedDict()
-        for k, v in _sd.items():
-            sd[k] = pickle.loads(v)
-        model.load_state_dict(sd)
+    def _dispatch(self, state_bytes: bytes) -> dict:
+        started = time.perf_counter()
+        metrics = _remote_test.to(self._compute)(
+            state_bytes,
+            self._model_factory_bytes,
+            self._test_fn_bytes,
+        )
+        if isinstance(metrics, dict):
+            metrics.setdefault("elapsed_secs", time.perf_counter() - started)
+        return metrics
+
+
+__all__ = ["AsyncTrainer"]

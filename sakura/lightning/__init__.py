@@ -1,212 +1,304 @@
-# publisher.py
+"""Sakura's Lightning integration — validation offloaded to Zakuro.
+
+Sakura accelerates training by running validation *in parallel* with the
+next training epoch. Historically this required MPI + Redis plus a second
+Lightning process with ``SAKURA_ROLE=1``. This module replaces that plumbing
+with a single process that dispatches validation to a Zakuro worker via
+``@zk.fn`` — no MPI, no Redis, no bifurcated roles.
+
+Usage::
+
+    import lightning as L
+    import zakuro as zk
+    from sakura.lightning import SakuraTrainer
+
+    def model_factory():
+        return MyLightningModule()
+
+    def val_loader_factory():
+        return DataLoader(val_dataset, batch_size=256)
+
+    trainer = SakuraTrainer(
+        max_epochs=10,
+        accelerator="auto",
+        val_compute=zk.Compute(uri="quic://worker-b:4433"),  # or None → standalone
+        model_factory=model_factory,
+        val_loader_factory=val_loader_factory,
+    )
+    trainer.run(model, train_loader)
+
+When ``val_compute`` is ``None`` (or omitted) Zakuro's standalone fallback
+runs the validation in-process so the example still works on a laptop
+without a second worker.
+"""
+
+from __future__ import annotations
+
 import os
-from typing import Any, Optional
+import pickle
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any, Callable, Optional
 
 import lightning as L
-import lightning.pytorch as pl
-from lightning.pytorch.utilities.types import STEP_OUTPUT
-import pandas as pd
 import torch
-from IPython.display import display
-from lightning.pytorch.loggers import CSVLogger
-from torch import nn
-from torch.nn import functional as F
-from torch.utils.data import DataLoader, random_split
-from torchmetrics import Accuracy
-from torchvision import transforms
-from torchvision.datasets import MNIST
-from collections import OrderedDict
-import pickle
-
 from lightning.pytorch.callbacks import Callback
-from mpi4py import MPI
-import numpy as np
-import redis
-import bson
-import argparse
-import time
+from torch.utils.data import DataLoader
 
-TRAINER_RANK = 0
-VALIDATION_RANK = 1
+import zakuro as zk
 
 
-def serialized_state_dict(model):
-    sd = OrderedDict()
-    device = model.device
-    for k, v in model.cpu().state_dict().items():
-        sd[k] = pickle.dumps(v)
-    model.to(device)
-    return sd
+# ---------------------------------------------------------------------------
+# Remote validation primitive
+# ---------------------------------------------------------------------------
 
 
-def deserialized_state_dict(state_dict):
-    sd = OrderedDict()
-    for k, v in state_dict.items():
-        sd[k] = pickle.loads(v)
-    return sd
+@zk.fn
+def _remote_validate(
+    state_bytes: bytes,
+    model_factory_bytes: bytes,
+    val_loader_factory_bytes: bytes,
+) -> dict:
+    """Rebuild model + loader on the worker, run validation, return metrics.
+
+    The caller serialises everything with cloudpickle (via ``@zk.fn``), so the
+    factories and state dict travel through whatever transport Zakuro picks
+    (HTTP, QUIC, or in-process for standalone). The validation loop is
+    intentionally plain PyTorch — no Lightning process on the worker side —
+    to keep the remote footprint small.
+    """
+    import pickle as _pickle
+
+    import torch as _torch
+    import torch.nn.functional as F
+
+    state_dict = _pickle.loads(state_bytes)
+    model_factory = _pickle.loads(model_factory_bytes)
+    val_loader_factory = _pickle.loads(val_loader_factory_bytes)
+
+    model = model_factory()
+    model.load_state_dict(state_dict)
+    model.eval()
+    loader = val_loader_factory()
+
+    total_loss = 0.0
+    total_count = 0
+    with _torch.no_grad():
+        for batch in loader:
+            x, y = batch
+            logits = model(x)
+            loss = F.cross_entropy(logits, y, reduction="sum")
+            total_loss += float(loss.item())
+            total_count += int(y.numel())
+
+    avg_loss = total_loss / max(total_count, 1)
+    return {
+        "val_loss": avg_loss,
+        "worker_name": os.environ.get("ZAKURO_WORKER_NAME", "<standalone>"),
+    }
 
 
-class Comm:
-    def __init__(self):
-        self.r = redis.Redis(host="localhost", port=6379, db=0)
-        p0 = self.r.pubsub()
-        p0.subscribe("SakuraLightning-0")
-        p1 = self.r.pubsub()
-        p1.subscribe("SakuraLightning-1")
-        self.p = {0: p0, 1: p1}
-
-    def recv(self, source, blocking=True):
-        while True:
-            message = self.p[1 - source].get_message()
-            if message:
-                try:
-                    assert type(message["data"]) == bytes
-                    d = bson.loads(message["data"])
-                    return d
-                except:
-                    time.sleep(0.01)
-            if not blocking:
-                return None
-
-    def send(self, msg, dest):
-        self.r.publish(f"SakuraLightning-{dest}", bson.dumps(msg))
+# ---------------------------------------------------------------------------
+# Callback: fires per training epoch, submits remote validation
+# ---------------------------------------------------------------------------
 
 
-class SakuraLightning(Callback):
-    def __init__(self, rank=0, *args, output_dir="/opt/zakuro/logs", **kwargs):
-        super(SakuraLightning, self).__init__(*args, *kwargs)
-        self._validation_loss = []
-        self._training_loss = []
-        self._best_val_loss = None
-        self._comm = Comm()
-        self._rank = rank
-        self.epoch = 0
-        self._log_file = f"{output_dir}/sakuraLightning.log"
-        if self._rank == VALIDATION_RANK:
-            with open(self._log_file, "w") as f:
-                f.write("")
-            self._comm.send({"message": "ready"}, dest=TRAINER_RANK)
+class SakuraLightningCallback(Callback):
+    """Async validation callback.
 
-    def on_validation_start(
-        self, trainer: L.Trainer, pl_module: L.LightningModule
+    On ``on_train_epoch_end`` the current model state is shipped to the
+    configured Zakuro compute. The future is reaped at the start of the next
+    epoch (so validation overlaps with the next training pass), and the final
+    pending future is drained in ``on_train_end``.
+    """
+
+    def __init__(
+        self,
+        compute: zk.Compute,
+        model_factory: Callable[[], L.LightningModule],
+        val_loader_factory: Callable[[], DataLoader],
+        model_path: Optional[str] = None,
+        verbose: bool = True,
     ) -> None:
-        msg = self._comm.recv(source=TRAINER_RANK)
-        while not msg["epoch"] == self.epoch:
-            time.sleep(0.01)
-            msg = self._comm.recv(source=TRAINER_RANK)
+        super().__init__()
+        self._compute = compute
+        self._model_factory_bytes = pickle.dumps(model_factory)
+        self._val_loader_factory_bytes = pickle.dumps(val_loader_factory)
+        self._model_path = model_path
+        self._verbose = verbose
 
-        sd = deserialized_state_dict(msg["state_dict"])
-        # log(f"@{self._rank} received {len(sd)} dictionary")
-        _sd = pl_module.state_dict()
-        for (_k, _v), (k, v) in zip(_sd.items(), sd.items()):
-            _sd[_k] = v
-        pl_module.load_state_dict(_sd)
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sakura-val")
+        self._pending: Optional[Future] = None
+        self._best_val_loss: Optional[float] = None
+        self._history: list[dict] = []
 
-    def on_train_epoch_end(self, trainer, *args, **kwargs):
-        self.__log(
-            f"@{self._rank}#on_train_epoch_end"
-        ) if trainer.global_rank == 0 else None
-        self._comm.send(
-            {
-                "state_dict": serialized_state_dict(trainer.model),
-                "state": "TRAINING",
-                "epoch": self.epoch,
-            },
-            dest=VALIDATION_RANK,
-        )
-        msg = self._comm.recv(source=VALIDATION_RANK, blocking=False)
-        if msg is not None:
-            self.__log(
-                f"@{self._rank} received {msg} from val"
-            ) if trainer.global_rank == 0 else None
-        self.epoch += 1
+    # .................................................................. fit
 
-    def on_validation_batch_end(
+    def on_train_epoch_end(
         self,
         trainer: L.Trainer,
         pl_module: L.LightningModule,
-        outputs: STEP_OUTPUT,
-        batch: Any,
-        batch_idx: int,
-        dataloader_idx: int = 0,
     ) -> None:
-        self._validation_loss.append(float(outputs.cpu()))
+        # Reap previous epoch's validation before kicking off a new one so the
+        # user sees losses in order and so we don't stack pending futures.
+        self._drain(trainer)
 
-    def on_validation_end(
+        state_bytes = pickle.dumps(
+            {k: v.detach().cpu() for k, v in pl_module.state_dict().items()}
+        )
+        epoch = trainer.current_epoch
+        self._pending = self._pool.submit(
+            self._validate_remote, state_bytes, epoch, trainer, pl_module
+        )
+
+    def on_train_end(
         self, trainer: L.Trainer, pl_module: L.LightningModule
     ) -> None:
-        val_loss = np.mean(self._validation_loss)
-        try:
-            assert val_loss > self._best_val_loss
-        except:
-            self._best_val_loss = val_loss
-            trainer.save_checkpoint(self.model_path)
-        self.__log(f"@{self._rank} sent {str(val_loss)} to trainer")
-        self._comm.send(
-            {"epoch": self.epoch, "avg_val_loss": str(val_loss)}, dest=TRAINER_RANK
-        )
-        self._validation_loss = []
-        self.epoch += 1
+        self._drain(trainer)
+        self._pool.shutdown(wait=True)
 
-    def __log(self, msg):
-        with open(self._log_file, "a") as f:
-            f.write(f"{msg}\n")
+    # .............................................................. history
+
+    @property
+    def history(self) -> list[dict]:
+        """List of ``{"epoch", "val_loss", "worker_name", "elapsed_secs"}`` rows."""
+        return list(self._history)
+
+    @property
+    def best_val_loss(self) -> Optional[float]:
+        return self._best_val_loss
+
+    # ............................................................. internals
+
+    def _validate_remote(
+        self,
+        state_bytes: bytes,
+        epoch: int,
+        trainer: L.Trainer,
+        pl_module: L.LightningModule,
+    ) -> dict:
+        started = time.perf_counter()
+        result = _remote_validate.to(self._compute)(
+            state_bytes,
+            self._model_factory_bytes,
+            self._val_loader_factory_bytes,
+        )
+        result["epoch"] = epoch
+        result["elapsed_secs"] = time.perf_counter() - started
+        return result
+
+    def _drain(self, trainer: L.Trainer) -> None:
+        if self._pending is None:
+            return
+        result = self._pending.result()
+        self._pending = None
+
+        val_loss = result["val_loss"]
+        self._history.append(result)
+        if self._verbose:
+            print(
+                f"[Sakura] epoch={result['epoch']} val_loss={val_loss:.4f} "
+                f"on={result['worker_name']} took={result['elapsed_secs']:.2f}s"
+            )
+        if self._best_val_loss is None or val_loss < self._best_val_loss:
+            self._best_val_loss = val_loss
+            if self._model_path:
+                trainer.save_checkpoint(self._model_path)
+
+
+# ---------------------------------------------------------------------------
+# Trainer façade
+# ---------------------------------------------------------------------------
 
 
 class SakuraTrainer:
+    """Lightning trainer that offloads validation to a remote Zakuro worker.
+
+    A drop-in alternative to ``L.Trainer`` for the async-validation use case.
+    Instead of spawning a validator process via MPI + ``SAKURA_ROLE``, Sakura
+    dispatches a single ``@zk.fn`` call per epoch; the future overlaps with
+    the next training pass on the trainer host.
+    """
+
     def __init__(
         self,
-        *args,
-        accelerator="auto",
-        kwargs_train=None,
-        kwargs_val=None,
-        **kwargs,
+        *,
+        val_compute: Optional[zk.Compute] = None,
+        model_factory: Optional[Callable[[], L.LightningModule]] = None,
+        val_loader_factory: Optional[Callable[[], DataLoader]] = None,
+        model_path: Optional[str] = None,
+        verbose: bool = True,
+        **trainer_kwargs: Any,
     ) -> None:
-        role = int(os.environ["SAKURA_ROLE"])
-        if (kwargs_train is not None) and (role == TRAINER_RANK):
-            kwargs = kwargs.update(**kwargs_train)
-        elif (kwargs_val is not None) and (role == VALIDATION_RANK):
-            kwargs = kwargs.update(**kwargs_val)
-        self._special_callbacks = SakuraLightning(rank=role)
-        self._trainer = L.Trainer(
-            *args,
-            accelerator=accelerator if role == TRAINER_RANK else "cpu",
-            callbacks=[self._special_callbacks],
-            **kwargs,
-            enable_progress_bar=role == TRAINER_RANK,
-        )
-        self._role = role
+        self._val_compute = val_compute
+        self._model_factory = model_factory
+        self._val_loader_factory = val_loader_factory
+        self._model_path = model_path
+        self._verbose = verbose
+        self._trainer_kwargs = trainer_kwargs
+        self._callback: Optional[SakuraLightningCallback] = None
 
     def run(
         self,
-        model,
-        train_loader,
-        val_loader,
-        *args,
-        kwargs_train=None,
-        kwargs_val=None,
-        model_path=None,
-        **kwargs,
-    ):
-        self._special_callbacks.model_path = model_path
-        if (kwargs_train is not None) and (self._role == TRAINER_RANK):
-            kwargs = kwargs.update(**kwargs_train)
-        elif (kwargs_val is not None) and (self._role == VALIDATION_RANK):
-            kwargs = kwargs.update(**kwargs_val)
-        if self._role == TRAINER_RANK:
-            self._trainer.fit(
-                model,
-                train_loader,
-                *args,
-                **kwargs,
-            )
-        else:
-            [
-                self._trainer.validate(
-                    model,
-                    val_loader,
-                    *args,
-                    **kwargs,
+        model: L.LightningModule,
+        train_loader: DataLoader,
+        val_loader: Optional[DataLoader] = None,
+        *,
+        model_factory: Optional[Callable[[], L.LightningModule]] = None,
+        val_loader_factory: Optional[Callable[[], DataLoader]] = None,
+        model_path: Optional[str] = None,
+        **run_kwargs: Any,
+    ) -> L.LightningModule:
+        """Train ``model`` with async validation on a remote Zakuro worker."""
+        model_factory = model_factory or self._model_factory
+        val_loader_factory = val_loader_factory or self._val_loader_factory
+        model_path = model_path or self._model_path
+
+        # Fallbacks for a friendlier default experience ---------------------
+        # If no factory is given, reuse the in-process model class; the remote
+        # worker must have the class importable for this to work. Same for
+        # the loader.
+        if model_factory is None:
+            model_cls = type(model)
+            model_factory = lambda: model_cls()  # noqa: E731
+        if val_loader_factory is None:
+            if val_loader is None:
+                raise ValueError(
+                    "SakuraTrainer.run needs either val_loader or val_loader_factory"
                 )
-                for _ in range(self._trainer.max_epochs)
-            ]
+            loader = val_loader
+            val_loader_factory = lambda: loader  # noqa: E731
+
+        compute = self._val_compute if self._val_compute is not None else zk.Compute()
+
+        callback = SakuraLightningCallback(
+            compute=compute,
+            model_factory=model_factory,
+            val_loader_factory=val_loader_factory,
+            model_path=model_path,
+            verbose=self._verbose,
+        )
+        self._callback = callback
+
+        user_callbacks = list(self._trainer_kwargs.pop("callbacks", []))
+        trainer = L.Trainer(
+            callbacks=user_callbacks + [callback],
+            **self._trainer_kwargs,
+            **run_kwargs,
+        )
+        trainer.fit(model, train_loader)
+        return model
+
+    @property
+    def history(self) -> list[dict]:
+        return self._callback.history if self._callback else []
+
+    @property
+    def best_val_loss(self) -> Optional[float]:
+        return self._callback.best_val_loss if self._callback else None
+
+
+__all__ = [
+    "SakuraLightningCallback",
+    "SakuraTrainer",
+]
