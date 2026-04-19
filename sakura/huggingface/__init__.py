@@ -149,6 +149,12 @@ class SakuraHFCallback(TrainerCallback):
           when you want every epoch's metrics at the cost of wall time.
         - ``"block"``: drain the oldest pending future first, freeing a
           slot, then dispatch. Balances throughput against memory.
+    async_copy:
+        When ``True`` and the model sits on CUDA, the on-epoch-end
+        snapshot is scheduled on a dedicated CUDA stream and handed off
+        to the worker thread via an event. The main training thread no
+        longer waits for the PCIe transfer. Falls back to a blocking
+        ``.cpu()`` on CPU/MPS/unknown devices.
     verbose:
         Print each epoch's metrics when ready (default True).
     """
@@ -165,6 +171,7 @@ class SakuraHFCallback(TrainerCallback):
         fp16_state_dict: bool = False,
         max_pending: int = 4,
         on_backpressure: Literal["skip", "queue", "block"] = "skip",
+        async_copy: bool = True,
         verbose: bool = True,
     ) -> None:
         self._compute = val_compute if val_compute is not None else zk.Compute()
@@ -176,6 +183,10 @@ class SakuraHFCallback(TrainerCallback):
         self._fp16 = fp16_state_dict
         self._max_pending = max(1, int(max_pending))
         self._backpressure_policy = on_backpressure
+        # When the model lives on CUDA, schedule the GPU→CPU copy on a
+        # dedicated stream so the main training stream stays unblocked. The
+        # worker thread synchronises on the recorded event before pickling.
+        self._async_copy = bool(async_copy)
         self._verbose = verbose
 
         self._pool = ThreadPoolExecutor(
@@ -225,16 +236,49 @@ class SakuraHFCallback(TrainerCallback):
                 self._drain_oldest(state)
             # "queue" falls through to the normal dispatch below.
 
-        # Snapshot the weights on the main thread (must happen now — next
-        # epoch's training would otherwise mutate them in place) but defer
-        # the fp16 conversion and cloudpickle serialisation to the worker
-        # thread. For large models the dumps alone is 1–3 s and was
-        # previously blocking the training loop.
-        state_dict_snapshot = {
-            k: v.detach().cpu() for k, v in model.state_dict().items()
-        }
+        # Snapshot the weights now (next epoch's training would otherwise
+        # mutate them in place). For CUDA models we issue the PCIe copy on
+        # a dedicated stream and hand the event to the worker thread, so
+        # the main thread returns in O(ms) instead of waiting on the
+        # ~150–200 ms transfer. For CPU/MPS/unknown devices we fall back
+        # to the blocking copy.
+        copy_event = None
+        try:
+            import torch as _torch
+
+            first_param = next(model.parameters(), None)
+            use_async = (
+                self._async_copy
+                and first_param is not None
+                and first_param.device.type == "cuda"
+                and _torch.cuda.is_available()
+            )
+        except Exception:
+            use_async = False
+
+        if use_async:
+            import torch as _torch
+
+            copy_stream = _torch.cuda.Stream()
+            with _torch.cuda.stream(copy_stream):
+                # non_blocking=True returns a fresh CPU tensor whose data
+                # is still being DMA'd from the GPU. We do *not* call
+                # .clone() — that would force a wait for the DMA to finish.
+                # The worker thread synchronises on copy_event before
+                # reading these tensors.
+                state_dict_snapshot = {
+                    k: v.detach().to("cpu", non_blocking=True)
+                    for k, v in model.state_dict().items()
+                }
+            copy_event = _torch.cuda.Event()
+            copy_event.record(copy_stream)
+        else:
+            state_dict_snapshot = {
+                k: v.detach().cpu() for k, v in model.state_dict().items()
+            }
+
         fut = self._pool.submit(
-            self._dispatch_with_snapshot, state_dict_snapshot, epoch
+            self._dispatch_with_snapshot, state_dict_snapshot, epoch, copy_event
         )
         self._pending.append((epoch, fut))
 
@@ -246,12 +290,21 @@ class SakuraHFCallback(TrainerCallback):
 
     # ............................................................. internals
 
-    def _dispatch_with_snapshot(self, state_dict_snapshot: dict, epoch: int) -> dict:
+    def _dispatch_with_snapshot(
+        self, state_dict_snapshot: dict, epoch: int, copy_event: Any = None,
+    ) -> dict:
         """Run on the worker thread: fp16 cast + cloudpickle + remote call.
 
         Keeps the main thread free to keep training while we package the
         (large) state dict.
+
+        When ``copy_event`` is supplied, the snapshot is still mid-transfer
+        on a separate CUDA stream. We synchronise on the event here (in the
+        pool thread) so the main thread never paid the wait cost.
         """
+        if copy_event is not None:
+            copy_event.synchronize()
+
         if self._fp16:
             import torch as _torch
 
