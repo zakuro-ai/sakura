@@ -8,9 +8,11 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
@@ -23,10 +25,22 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Install package + test deps
+      - name: Install package + test deps (Unix)
+        if: runner.os != 'Windows'
         run: |
           uv venv .venv
           uv pip install --python .venv/bin/python -e '.[huggingface]' pytest
 
-      - name: Run tests
+      - name: Install package + test deps (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/Scripts/python.exe -e '.[huggingface]' pytest
+
+      - name: Run tests (Unix)
+        if: runner.os != 'Windows'
         run: .venv/bin/pytest tests/ -v
+
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        run: .venv/Scripts/pytest.exe tests/ -v
