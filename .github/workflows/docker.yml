@@ -12,6 +12,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -27,6 +36,7 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
+          target: production
           push: ${{ github.event_name != 'pull_request' }}
           tags: zakuroai/sakura:latest
           cache-from: type=gha
