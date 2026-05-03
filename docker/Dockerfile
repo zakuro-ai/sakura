@@ -10,7 +10,7 @@ ENV UV_BREAK_SYSTEM_PACKAGES=1
 # System packages: Python 3.12, OpenMPI, Redis, locale support
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-dev python3-venv \
-    sudo git libopenmpi-dev locales redis-server \
+    sudo git libopenmpi-dev locales redis-server xz-utils curl \
     && sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
     && locale-gen \
     && rm -rf /var/lib/apt/lists/*
