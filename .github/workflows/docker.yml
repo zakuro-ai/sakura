@@ -21,6 +21,9 @@ jobs:
           pip install build
           python -m build --wheel
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -37,6 +40,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           target: production
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: zakuroai/sakura:latest
           cache-from: type=gha

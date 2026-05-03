@@ -52,10 +52,11 @@ CMD ["python3", "-m", "pytest", "tests/", "-v"]
 FROM base AS production
 
 # s6-overlay
+ARG TARGETARCH
 ADD https://github.com/just-containers/s6-overlay/releases/download/v3.2.0.2/s6-overlay-noarch.tar.xz /tmp
 RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz
-ADD https://github.com/just-containers/s6-overlay/releases/download/v3.2.0.2/s6-overlay-x86_64.tar.xz /tmp
-RUN tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz
+RUN S6_ARCH=$(case "$TARGETARCH" in amd64) echo x86_64;; arm64) echo aarch64;; esac) && \
+    curl -sSL "https://github.com/just-containers/s6-overlay/releases/download/v3.2.0.2/s6-overlay-${S6_ARCH}.tar.xz" | tar -C / -Jxpf -
 
 # s6 redis service
 ARG TASK="redis"
