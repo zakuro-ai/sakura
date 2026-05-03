@@ -20,7 +20,7 @@ dependencies = [
     "chardet",
     "lightning",
     "ipython",
-    "charset-normalizer==3.1.0",
+    "charset-normalizer>=3.1.0",
     # Zakuro replaces the former MPI + Redis transport: per-epoch validation
     # is dispatched to a Zakuro worker via @zk.fn instead of a second MPI rank.
     "zakuro-ai>=0.2.3",
@@ -57,7 +57,7 @@ dev = ["pytest"]
 
 [project.scripts]
 sakura = "sakura.__main__:main"
-sakura-benchmark = "main:main"
+sakura-benchmark = "sakura.benchmark:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -70,4 +70,3 @@ packages = ["sakura"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "sakura/config.yaml" = "sakura/config.yaml"
-"main.py" = "main.py"
