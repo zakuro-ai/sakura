@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 torch = pytest.importorskip("torch")
+pytest.importorskip("transformers")  # sakura.ddp imports sakura.huggingface
 
 from sakura.ddp import DDPAsyncEvalCallback
 
