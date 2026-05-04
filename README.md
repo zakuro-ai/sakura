@@ -115,6 +115,11 @@ cd sakura
 # Copy environment template
 cp .env.template .env
 
+# Create a virtual environment with a supported Python version.
+# PyTorch wheels are not yet published for Python 3.13+, so pin to 3.12.
+uv venv --python 3.12
+source .venv/bin/activate
+
 # Install in editable mode
 uv pip install -e .
 ```
@@ -184,9 +189,12 @@ python3 main.py --mode baseline
 
 ### Using the Sakura CLI
 
+The `sakura` command is an informational entry point — it prints help and exits.
+To run the bundled benchmark from the CLI, use `sakura-benchmark`:
+
 ```bash
-# Launch Sakura via the CLI entry point
-sakura main.py
+# Run the benchmark via the bundled entry point (equivalent to `python3 main.py`)
+sakura-benchmark --mode sakura --epochs 10
 ```
 
 You should be able to see this output with no delay between epochs (asynchronous testing).
@@ -223,4 +231,4 @@ docker exec -it sakura bash
 
 # Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for a detailed list of changes.
+See the [GitHub releases page](https://github.com/zakuro-ai/sakura/releases) for a detailed list of changes.
