@@ -1,4 +1,4 @@
-//! PyO3 bindings: Dispatcher, Future, Result, TlsConfig.
+//! PyO3 bindings: Dispatcher, Future, Result, TlsConfig, WorkerSupervisor.
 //
 // pyo3 0.21 generates `unsafe fn` wrappers that internally call unsafe fns;
 // the crate-level `#![deny(unsafe_op_in_unsafe_fn)]` rejects this on Rust 2021
@@ -369,4 +369,73 @@ fn parse_response(buf: &[u8]) -> Result<PyRpcResult, PyWireError> {
         aux,
         tensors,
     })
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Task 11: WorkerSupervisor
+// ────────────────────────────────────────────────────────────────────────────
+
+use crate::supervisor::{spawn_worker, WorkerHandle};
+use std::collections::HashMap;
+
+#[pyclass(name = "WorkerSupervisor")]
+pub struct PyWorkerSupervisor {
+    handles: Mutex<Vec<Arc<WorkerHandle>>>,
+    shutdown_timeout: Duration,
+}
+
+#[pymethods]
+impl PyWorkerSupervisor {
+    #[new]
+    #[pyo3(signature = (shutdown_timeout_s = 30.0))]
+    fn new(shutdown_timeout_s: f64) -> Self {
+        Self {
+            handles: Mutex::new(Vec::new()),
+            shutdown_timeout: Duration::from_secs_f64(shutdown_timeout_s.max(0.1)),
+        }
+    }
+
+    /// Spawn one worker.
+    /// `cmd` is the argv list (e.g., `[sys.executable, "-m", "sakura.worker"]`).
+    /// `env` is extra env vars (e.g., `CUDA_VISIBLE_DEVICES=1`).
+    /// Returns a tuple `(uri, cert_der_bytes)` once the worker prints
+    /// `SAKURA_WORKER_LISTENING <uri> <cert_hex>` on stdout.
+    #[pyo3(signature = (cmd, env = None, startup_timeout_s = 10.0))]
+    fn spawn(
+        &self,
+        py: Python<'_>,
+        cmd: Vec<String>,
+        env: Option<&Bound<'_, PyDict>>,
+        startup_timeout_s: f64,
+    ) -> PyResult<(String, Py<PyBytes>)> {
+        let mut env_map: HashMap<String, String> = HashMap::new();
+        if let Some(d) = env {
+            for (k, v) in d.iter() {
+                let key: String = k.extract()?;
+                let val: String = v.extract()?;
+                env_map.insert(key, val);
+            }
+        }
+        let timeout = Duration::from_secs_f64(startup_timeout_s.max(0.1));
+        let handle = spawn_worker(&cmd, env_map, timeout)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let uri = handle.uri.clone();
+        let cert = handle.cert_der.clone();
+        self.handles.lock().unwrap().push(Arc::new(handle));
+        let cert_py = PyBytes::new_bound(py, &cert).unbind();
+        Ok((uri, cert_py))
+    }
+
+    /// Shut down every spawned worker.
+    fn shutdown(&self) {
+        let handles = std::mem::take(&mut *self.handles.lock().unwrap());
+        let timeout = self.shutdown_timeout;
+        for h in handles {
+            h.shutdown(timeout);
+        }
+    }
+
+    fn __len__(&self) -> usize {
+        self.handles.lock().unwrap().len()
+    }
 }
