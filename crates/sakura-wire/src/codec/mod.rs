@@ -61,11 +61,12 @@ pub fn pack_request(
     Ok(out)
 }
 
+/// Unpacked components of a wire request: header, descriptors, tensor payloads, aux bytes.
+pub type UnpackedRequest = (RpcRequestHeader, Vec<TensorDesc>, Vec<Vec<u8>>, Vec<u8>);
+
 /// Unpack a request buffer into header + descriptors + per-tensor byte slices + aux bytes.
 /// Returns owned bytes for tensors so the caller can reuse the input buffer.
-pub fn unpack_request(
-    buf: &[u8],
-) -> Result<(RpcRequestHeader, Vec<TensorDesc>, Vec<Vec<u8>>, Vec<u8>), CodecError> {
+pub fn unpack_request(buf: &[u8]) -> Result<UnpackedRequest, CodecError> {
     let mut cursor = 0usize;
     let read_u32 = |cur: &mut usize, buf: &[u8]| -> Result<u32, CodecError> {
         if buf.len() < *cur + 4 {
