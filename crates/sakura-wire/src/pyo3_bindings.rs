@@ -19,7 +19,10 @@ use crate::codec::{pack_request, OwnedTensor, RpcRequestHeader, TensorView, Wire
 use crate::protocol::{WireError, HANDLER_ECHO};
 use crate::runtime::WireRuntime;
 use crate::supervisor::encode_hex;
-use crate::transport::{accept_request, bind_server, connect, generate_self_signed, rpc_call, send_response, TransportError};
+use crate::transport::{
+    accept_request, bind_server, connect, generate_self_signed, rpc_call, send_response,
+    TransportError,
+};
 
 #[derive(Debug, thiserror::Error)]
 enum PyWireError {
@@ -534,7 +537,10 @@ fn echo_handler(req_bytes: &[u8]) -> Result<Vec<u8>, PyWireError> {
             detail: e.to_string(),
         })
     })?;
-    let total = 4 + header_bytes.len() + 4 + descs_bytes.len()
+    let total = 4
+        + header_bytes.len()
+        + 4
+        + descs_bytes.len()
         + tensors.iter().map(Vec::len).sum::<usize>()
         + aux.len();
     let mut out = Vec::with_capacity(total);

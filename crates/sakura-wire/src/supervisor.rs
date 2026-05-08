@@ -31,7 +31,15 @@ impl WorkerHandle {
         let mut waited = Duration::ZERO;
         let step = Duration::from_millis(50);
         while waited < timeout {
-            if self.child.lock().unwrap().try_wait().ok().flatten().is_some() {
+            if self
+                .child
+                .lock()
+                .unwrap()
+                .try_wait()
+                .ok()
+                .flatten()
+                .is_some()
+            {
                 return;
             }
             std::thread::sleep(step);
@@ -61,9 +69,10 @@ pub fn spawn_worker(
         command.env(k, v);
     }
     let mut child = command.spawn()?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        SupervisorError::Spawn(std::io::Error::other("no stdout"))
-    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| SupervisorError::Spawn(std::io::Error::other("no stdout")))?;
 
     let (tx, rx) = std::sync::mpsc::channel::<Result<(String, Vec<u8>), SupervisorError>>();
     std::thread::spawn(move || {
@@ -83,9 +92,8 @@ pub fn spawn_worker(
                             let _ = tx.send(Ok((uri, cert)));
                         }
                         Err(e) => {
-                            let _ = tx.send(Err(SupervisorError::BadUri(format!(
-                                "bad cert hex: {e}"
-                            ))));
+                            let _ =
+                                tx.send(Err(SupervisorError::BadUri(format!("bad cert hex: {e}"))));
                         }
                     }
                     return;

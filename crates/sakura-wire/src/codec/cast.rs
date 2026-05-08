@@ -5,7 +5,10 @@ use half::{bf16, f16};
 
 /// Cast a slice of f32 bytes into a Vec<u8> of fp16 bytes (length halves).
 pub fn cast_f32_to_f16(input: &[u8]) -> Vec<u8> {
-    debug_assert!(input.len().is_multiple_of(4), "input must be 4-byte aligned (f32)");
+    debug_assert!(
+        input.len().is_multiple_of(4),
+        "input must be 4-byte aligned (f32)"
+    );
     let n = input.len() / 4;
     let mut out = Vec::with_capacity(n * 2);
     for chunk in input.chunks_exact(4) {
@@ -18,7 +21,10 @@ pub fn cast_f32_to_f16(input: &[u8]) -> Vec<u8> {
 
 /// Cast a slice of fp16 bytes back to f32 bytes (length doubles).
 pub fn cast_f16_to_f32(input: &[u8]) -> Vec<u8> {
-    debug_assert!(input.len().is_multiple_of(2), "input must be 2-byte aligned (f16)");
+    debug_assert!(
+        input.len().is_multiple_of(2),
+        "input must be 2-byte aligned (f16)"
+    );
     let n = input.len() / 2;
     let mut out = Vec::with_capacity(n * 4);
     for chunk in input.chunks_exact(2) {
@@ -31,7 +37,10 @@ pub fn cast_f16_to_f32(input: &[u8]) -> Vec<u8> {
 
 /// Cast a slice of f32 bytes into a Vec<u8> of bf16 bytes (length halves).
 pub fn cast_f32_to_bf16(input: &[u8]) -> Vec<u8> {
-    debug_assert!(input.len().is_multiple_of(4), "input must be 4-byte aligned (f32)");
+    debug_assert!(
+        input.len().is_multiple_of(4),
+        "input must be 4-byte aligned (f32)"
+    );
     let n = input.len() / 4;
     let mut out = Vec::with_capacity(n * 2);
     for chunk in input.chunks_exact(4) {
@@ -44,7 +53,10 @@ pub fn cast_f32_to_bf16(input: &[u8]) -> Vec<u8> {
 
 /// Cast a slice of bf16 bytes back to f32 bytes (length doubles).
 pub fn cast_bf16_to_f32(input: &[u8]) -> Vec<u8> {
-    debug_assert!(input.len().is_multiple_of(2), "input must be 2-byte aligned (bf16)");
+    debug_assert!(
+        input.len().is_multiple_of(2),
+        "input must be 2-byte aligned (bf16)"
+    );
     let n = input.len() / 2;
     let mut out = Vec::with_capacity(n * 4);
     for chunk in input.chunks_exact(2) {
@@ -102,7 +114,11 @@ mod tests {
         let recovered = bytes_to_f32(&back);
         for (orig, got) in original.iter().zip(recovered.iter()) {
             // bf16 has 7 mantissa bits — relative precision ~1%.
-            let rel = if orig.abs() > 1e-6 { (orig - got).abs() / orig.abs() } else { (orig - got).abs() };
+            let rel = if orig.abs() > 1e-6 {
+                (orig - got).abs() / orig.abs()
+            } else {
+                (orig - got).abs()
+            };
             assert!(rel < 1e-2, "bf16 round-trip drift: {} vs {}", orig, got);
         }
     }

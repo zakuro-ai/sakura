@@ -127,10 +127,15 @@ pub async fn connect(
 
 /// Open a bidirectional stream, write the request bytes, signal end-of-write,
 /// then read the entire response and return it.
-pub async fn rpc_call(conn: &Connection, request_bytes: Vec<u8>) -> Result<Vec<u8>, TransportError> {
+pub async fn rpc_call(
+    conn: &Connection,
+    request_bytes: Vec<u8>,
+) -> Result<Vec<u8>, TransportError> {
     let (mut send, mut recv) = conn.open_bi().await?;
     send.write_all(&request_bytes).await?;
-    send.finish().await.map_err(|e| TransportError::Write(e.to_string()))?;
+    send.finish()
+        .await
+        .map_err(|e| TransportError::Write(e.to_string()))?;
     let resp = recv
         .read_to_end(64 * 1024 * 1024 * 1024)
         .await
@@ -142,7 +147,10 @@ pub async fn rpc_call(conn: &Connection, request_bytes: Vec<u8>) -> Result<Vec<u
 pub async fn accept_request(
     conn: &Connection,
 ) -> Result<(quinn::SendStream, Vec<u8>), TransportError> {
-    let (send, mut recv) = conn.accept_bi().await.map_err(|e| TransportError::Quinn(e.to_string()))?;
+    let (send, mut recv) = conn
+        .accept_bi()
+        .await
+        .map_err(|e| TransportError::Quinn(e.to_string()))?;
     let req = recv
         .read_to_end(64 * 1024 * 1024 * 1024)
         .await
@@ -156,6 +164,8 @@ pub async fn send_response(
     bytes: Vec<u8>,
 ) -> Result<(), TransportError> {
     send.write_all(&bytes).await?;
-    send.finish().await.map_err(|e| TransportError::Write(e.to_string()))?;
+    send.finish()
+        .await
+        .map_err(|e| TransportError::Write(e.to_string()))?;
     Ok(())
 }
