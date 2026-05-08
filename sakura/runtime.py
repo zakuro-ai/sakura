@@ -33,6 +33,37 @@ class SakuraRuntime:
     def services(self) -> tuple[Service, ...]:
         return tuple(self._sorted)
 
+    def start(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        for s in self._sorted:
+            hook = getattr(s, "on_runtime_start", None)
+            if callable(hook):
+                try:
+                    hook(self)
+                except BaseException:
+                    _log.exception("service '%s' on_runtime_start failed", s.name)
+
+    def shutdown(self, *, timeout: float = 30.0) -> None:
+        if not self._started:
+            return
+        for s in reversed(self._sorted):
+            hook = getattr(s, "on_runtime_shutdown", None)
+            if callable(hook):
+                try:
+                    hook(self)
+                except BaseException:
+                    _log.exception("service '%s' on_runtime_shutdown failed", s.name)
+        self._started = False
+
+    def __enter__(self) -> "SakuraRuntime":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.shutdown()
+
     def install(self, service: Service) -> None:
         if not service.name:
             raise ValueError("service.name must be a non-empty string")
@@ -47,6 +78,13 @@ class SakuraRuntime:
         self._by_name[service.name] = service
         self._rebuild_sorted()
         service.on_install(self)
+        if self._started:
+            hook = getattr(service, "on_runtime_start", None)
+            if callable(hook):
+                try:
+                    hook(self)
+                except BaseException:
+                    _log.exception("service '%s' on_runtime_start failed", service.name)
 
     def uninstall(self, name: str) -> None:
         if name not in self._by_name:
@@ -92,6 +130,10 @@ class SakuraRuntime:
                     context={"service": svc.name, "event": type(event).__name__},
                 )
                 self.dispatch(err_evt)
+
+    def history(self) -> list[dict]:
+        """Return a copy of the rolled-up event log."""
+        return list(self._history)
 
     def _rebuild_sorted(self) -> None:
         indexed = list(enumerate(self._services))
