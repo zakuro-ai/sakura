@@ -1,14 +1,12 @@
-"""`sakura-worker` — minimal QUIC server for Plan 1.
+"""`sakura-worker` daemon — QUIC server that dispatches via HandlerRegistry.
 
-This worker speaks the sakura-wire protocol on top of QUIC, registers a
-single echo handler at HANDLER_ECHO (0xDEAD), and prints a single line to
-stdout once it is listening:
+Plan 1 used `run_echo_server` (only HANDLER_ECHO). Plan 2 swaps to
+`run_server` with the full default registry (echo + heartbeat +
+exec_cloudpickled), so cloudpickled callables can be dispatched
+end-to-end.
 
-    SAKURA_WORKER_LISTENING <uri> <cert_der_hex>
-
-The supervisor parses that line to learn the dynamic port and the
-self-signed cert it must trust. After printing, the worker serves until
-killed.
+Run via:
+    sakura-worker --listen quic://127.0.0.1:0
 """
 from __future__ import annotations
 
@@ -23,15 +21,32 @@ def main(argv: list[str] | None = None) -> int:
         help="Bind address (use port :0 for an ephemeral port; default).",
     )
     parser.add_argument(
-        "--print-cert-hex",
+        "--no-handshake",
         action="store_true",
-        default=True,
-        help="Print the self-signed cert (hex) on the listening line. Required for the supervisor handshake.",
+        default=False,
+        help="Suppress the SAKURA_WORKER_LISTENING handshake line on stdout.",
+    )
+    parser.add_argument(
+        "--echo-only",
+        action="store_true",
+        default=False,
+        help="Run only the echo handler (Plan 1 mode). Default: full registry.",
     )
     args = parser.parse_args(argv)
 
-    from sakura.wire import serve_echo  # imports sakura_wire native module
-    serve_echo(listen=args.listen, print_handshake=args.print_cert_hex)
+    if not args.listen.startswith("quic://"):
+        raise ValueError(f"--listen must be a quic:// URI, got: {args.listen}")
+    addr = args.listen[len("quic://"):]
+    print_handshake = not args.no_handshake
+
+    import sakura_wire as _native
+
+    if args.echo_only:
+        _native.run_echo_server(addr=addr, print_handshake=print_handshake)
+    else:
+        from sakura.worker.handlers import default_registry
+        registry = default_registry()
+        _native.run_server(addr=addr, callback=registry.dispatch, print_handshake=print_handshake)
     return 0
 
 
