@@ -48,9 +48,7 @@ dev = ["pytest", "maturin>=1.4"]
 [project.scripts]
 sakura = "sakura.__main__:main"
 sakura-benchmark = "main:main"
-# sakura-worker entry-point commented out for Task 1 — sakura/worker/__main__.py
-# does not exist yet. Task 12 will create it and re-enable this line.
-# sakura-worker = "sakura.worker.__main__:main"
+sakura-worker = "sakura.worker.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

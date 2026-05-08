@@ -16,9 +16,10 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 use crate::codec::{pack_request, OwnedTensor, RpcRequestHeader, TensorView, WireVersion};
-use crate::protocol::WireError;
+use crate::protocol::{WireError, HANDLER_ECHO};
 use crate::runtime::WireRuntime;
-use crate::transport::{connect, rpc_call, TransportError};
+use crate::supervisor::encode_hex;
+use crate::transport::{accept_request, bind_server, connect, generate_self_signed, rpc_call, send_response, TransportError};
 
 #[derive(Debug, thiserror::Error)]
 enum PyWireError {
@@ -438,4 +439,112 @@ impl PyWorkerSupervisor {
     fn __len__(&self) -> usize {
         self.handles.lock().unwrap().len()
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Task 12: run_echo_server — binds QUIC, prints handshake line, serves forever
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Bind a QUIC server, print one handshake line on stdout, then serve the
+/// echo handler forever (`HANDLER_ECHO`). Used by the `sakura-worker` daemon.
+#[pyfunction]
+#[pyo3(signature = (addr, print_handshake = true))]
+pub fn run_echo_server(py: Python<'_>, addr: String, print_handshake: bool) -> PyResult<()> {
+    py.allow_threads(|| -> PyResult<()> {
+        WireRuntime::shared().block_on(async move {
+            let pair = generate_self_signed("localhost")
+                .map_err(|e| PyRuntimeError::new_err(format!("cert: {e}")))?;
+            let bind_addr: SocketAddr = addr
+                .parse()
+                .map_err(|e| PyRuntimeError::new_err(format!("addr {addr}: {e}")))?;
+            let endpoint = bind_server(bind_addr, &pair)
+                .map_err(|e| PyRuntimeError::new_err(format!("bind: {e}")))?;
+            let local = endpoint
+                .local_addr()
+                .map_err(|e| PyRuntimeError::new_err(format!("local_addr: {e}")))?;
+            if print_handshake {
+                let cert_hex = encode_hex(&pair.cert_der);
+                println!("SAKURA_WORKER_LISTENING quic://{local} {cert_hex}");
+                let _ = std::io::Write::flush(&mut std::io::stdout().lock());
+            }
+
+            // Accept connections forever.
+            while let Some(incoming) = endpoint.accept().await {
+                tokio::spawn(async move {
+                    match incoming.await {
+                        Ok(conn) => loop {
+                            match accept_request(&conn).await {
+                                Ok((send, req)) => {
+                                    let resp = match echo_handler(&req) {
+                                        Ok(b) => b,
+                                        Err(e) => {
+                                            tracing::error!("echo: {e:?}");
+                                            return;
+                                        }
+                                    };
+                                    if let Err(e) = send_response(send, resp).await {
+                                        tracing::error!("send_response: {e:?}");
+                                        return;
+                                    }
+                                }
+                                Err(_) => return,
+                            }
+                        },
+                        Err(e) => tracing::error!("connection: {e:?}"),
+                    }
+                });
+            }
+            Ok(())
+        })
+    })
+}
+
+fn echo_handler(req_bytes: &[u8]) -> Result<Vec<u8>, PyWireError> {
+    use crate::codec::{unpack_request, RpcResponseHeader, RpcStatus, WireVersion};
+    let (header, descs, tensors, aux) = unpack_request(req_bytes).map_err(|e| {
+        PyWireError::Wire(WireError::DecodeFailed {
+            what: "echo unpack".into(),
+            detail: e.to_string(),
+        })
+    })?;
+    if header.handler_id != HANDLER_ECHO {
+        return Err(PyWireError::Wire(WireError::HandlerNotFound {
+            handler_id: header.handler_id,
+        }));
+    }
+
+    // Build the response: same descriptors + tensor bytes, identical aux.
+    let resp_header = RpcResponseHeader {
+        version: WireVersion::V1,
+        request_id: header.request_id,
+        status: RpcStatus::Ok,
+        n_result_tensors: descs.len() as u32,
+        aux_payload_bytes: aux.len() as u32,
+        elapsed_us: 0,
+    };
+    let header_bytes = postcard::to_allocvec(&resp_header).map_err(|e| {
+        PyWireError::Wire(WireError::DecodeFailed {
+            what: "encode resp header".into(),
+            detail: e.to_string(),
+        })
+    })?;
+    let descs_bytes = postcard::to_allocvec(&descs).map_err(|e| {
+        PyWireError::Wire(WireError::DecodeFailed {
+            what: "encode resp descs".into(),
+            detail: e.to_string(),
+        })
+    })?;
+    let total = 4 + header_bytes.len() + 4 + descs_bytes.len()
+        + tensors.iter().map(Vec::len).sum::<usize>()
+        + aux.len();
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
+    out.extend_from_slice(&header_bytes);
+    out.extend_from_slice(&(descs_bytes.len() as u32).to_le_bytes());
+    out.extend_from_slice(&descs_bytes);
+    for t in &tensors {
+        out.extend_from_slice(t);
+    }
+    out.extend_from_slice(&aux);
+    Ok(out)
 }
