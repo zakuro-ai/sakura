@@ -178,11 +178,11 @@ smallvec = { workspace = true }
 half = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 criterion = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [[bench]]
 name = "codec_bench"
