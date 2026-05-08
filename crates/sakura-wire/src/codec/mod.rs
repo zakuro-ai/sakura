@@ -1,5 +1,6 @@
 //! Wire-format codec: postcard headers + raw zero-copy tensor payloads.
 
+pub mod cast;
 pub mod header;
 
 pub use header::{
