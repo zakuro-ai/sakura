@@ -21,3 +21,16 @@ dump.rdb
 .env
 models/
 .coverage
+
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# maturin
+/dist/
+*.so
+*.dylib
+*.pyd
+.python-version
+.venv/

@@ -1,0 +1,32 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "1.0.0-alpha.0"
+edition = "2021"
+license = "BSD-3-Clause"
+repository = "https://github.com/zakuro-ai/sakura"
+
+[workspace.dependencies]
+pyo3 = { version = "0.21", features = ["extension-module", "abi3-py310"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "io-util", "process"] }
+quinn = "0.10"
+rustls = { version = "0.21", default-features = false, features = ["tls12"] }
+rustls-pemfile = "1.0"
+rcgen = "0.12"
+postcard = { version = "1.0", default-features = false, features = ["alloc", "use-std"] }
+serde = { version = "1.0", features = ["derive"] }
+bytes = "1.5"
+smallvec = { version = "1.13", features = ["serde", "union"] }
+half = { version = "2.4", default-features = false, features = ["std", "num-traits"] }
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+tempfile = "3.10"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = 1

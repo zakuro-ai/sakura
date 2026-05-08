@@ -1,11 +1,11 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.4,<2"]
+build-backend = "maturin"
 
 [project]
 name = "sakura-ml"
-version = "0.1.5"
-description = "Sakura provides asynchronous training for DNN."
+version = "1.0.0a0"
+description = "Sakura: SOTA training services for PyTorch DDP / Lightning / HuggingFace Trainer."
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.10"
@@ -21,8 +21,6 @@ dependencies = [
     "lightning",
     "ipython",
     "charset-normalizer==3.1.0",
-    # Zakuro replaces the former MPI + Redis transport: per-epoch validation
-    # is dispatched to a Zakuro worker via @zk.fn instead of a second MPI rank.
     "zakuro-ai>=0.2.3",
 ]
 classifiers = [
@@ -31,11 +29,7 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: BSD License",
     "Topic :: Scientific/Engineering",
-    "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Topic :: Software Development",
-    "Topic :: Software Development :: Libraries",
-    "Topic :: Software Development :: Libraries :: Python Modules",
     "Programming Language :: Python :: 3",
 ]
 
@@ -45,29 +39,28 @@ huggingface = [
     "datasets>=2.14.0",
     "accelerate>=1.1.0",
 ]
-tensorflow = [
-    "tensorflow>=2.15.0",
-]
-bench = [
-    "sakura-ml[huggingface]",
-]
+tensorflow = ["tensorflow>=2.15.0"]
+bench = ["sakura-ml[huggingface]"]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = ["pytest", "maturin>=1.4"]
 
 [project.scripts]
 sakura = "sakura.__main__:main"
 sakura-benchmark = "main:main"
+sakura-worker = "sakura.worker.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[tool.hatch.metadata]
-allow-direct-references = true
-
-[tool.hatch.build.targets.wheel]
-packages = ["sakura"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"sakura/config.yaml" = "sakura/config.yaml"
-"main.py" = "main.py"
+[tool.maturin]
+# python-source is omitted — sakura_wire is a pure Rust extension (no Python wrapper layer).
+# maturin will produce the .so directly as the module.
+manifest-path = "crates/sakura-wire/Cargo.toml"
+module-name = "sakura_wire"
+features = ["pyo3/extension-module"]
+include = [
+    { path = "sakura/config.yaml", format = "sdist" },
+    { path = "sakura/config.yaml", format = "wheel" },
+    { path = "main.py", format = "wheel" },
+]
