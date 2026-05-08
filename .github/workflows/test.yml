@@ -1,32 +1,51 @@
-name: Test
+name: test
 
 on:
   push:
-    branches: [master, main]
+    branches: [master]
   pull_request:
-    branches: [master, main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
 
 jobs:
-  pytest:
+  rust:
+    name: Rust
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: ${{ matrix.python-version }}
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt
+        run: cargo fmt --all --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace --all-features
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Install package + test deps
-        run: |
-          uv venv .venv
-          uv pip install --python .venv/bin/python -e '.[huggingface]' pytest
-
-      - name: Run tests
-        run: .venv/bin/pytest tests/ -v
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install build deps
+        run: pip install --upgrade pip maturin pytest
+      - name: Build + install via maturin develop
+        run: maturin develop --release
+      - name: Pytest (wire layer only — Plan 1)
+        run: pytest tests/wire/ -v
