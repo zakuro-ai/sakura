@@ -1,0 +1,47 @@
+[package]
+name = "sakura-wire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Sakura: zero-copy tensor wire codec + RPC over QUIC for SOTA training pipelines."
+
+[lib]
+name = "sakura_wire"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { workspace = true }
+tokio = { workspace = true }
+quinn = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+# rcgen is omitted for Task 1 — see workspace Cargo.toml note.
+# Task 12 (QUIC TLS bootstrap) will re-add it.
+# rcgen = { workspace = true }
+postcard = { workspace = true }
+serde = { workspace = true }
+bytes = { workspace = true }
+smallvec = { workspace = true }
+half = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# criterion is commented out for Task 1 — see workspace Cargo.toml note.
+# Task 14 (benches) will re-enable this once the toolchain is upgraded.
+# criterion = { workspace = true }
+
+# [[bench]] blocks commented out for Task 1 — bench source files don't exist yet.
+# Task 14 will create benches/codec_bench.rs and benches/transport_bench.rs and
+# re-enable these declarations.
+#
+# [[bench]]
+# name = "codec_bench"
+# harness = false
+#
+# [[bench]]
+# name = "transport_bench"
+# harness = false

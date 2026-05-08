@@ -1,0 +1,41 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "1.0.0-alpha.0"
+edition = "2021"
+license = "BSD-3-Clause"
+repository = "https://github.com/zakuro-ai/sakura"
+
+[workspace.dependencies]
+pyo3 = { version = "0.21", features = ["extension-module", "abi3-py310"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "io-util", "process"] }
+quinn = "0.10"
+rustls = { version = "0.21", default-features = false, features = ["tls12"] }
+rustls-pemfile = "1.0"
+# rcgen 0.11/0.12 both pull time 0.3.x → time-core 0.1.8 (edition2024, requires rustc ≥ 1.85).
+# Cargo fails to PARSE time-core 0.1.8's Cargo.toml on rustc 1.75, even for transitive deps.
+# rcgen is omitted for Task 1; Task 12 (QUIC TLS bootstrap) will re-add it once the
+# toolchain constraint is resolved.
+# rcgen = "0.12"
+postcard = { version = "1.0", default-features = false, features = ["alloc", "use-std"] }
+serde = { version = "1.0", features = ["derive"] }
+bytes = "1.5"
+smallvec = { version = "1.13", features = ["serde", "union"] }
+# half ≥ 2.5 requires rustc 1.81+; pin to the exact minor that works with rustc 1.75.
+half = { version = ">=2.4, <2.5", default-features = false, features = ["std", "num-traits"] }
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# criterion is intentionally omitted for Task 1 — its transitive dep time-core 0.1.8
+# uses edition2024 which requires rustc ≥ 1.85, but we are pinned to 1.75.
+# Task 14 (benches) will re-add criterion once the toolchain is upgraded.
+# tempfile ≥ 3.14 pulls getrandom 0.4 → wasip2/wasip3 → wit-bindgen (edition2024, rustc ≥ 1.85).
+# Pinned to a 3.10.x that works with rustc 1.75. Task 14 can upgrade with toolchain bump.
+tempfile = ">=3.10, <3.14"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = 1
