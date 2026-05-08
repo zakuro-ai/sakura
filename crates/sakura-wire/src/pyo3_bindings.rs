@@ -1,0 +1,372 @@
+//! PyO3 bindings: Dispatcher, Future, Result, TlsConfig.
+//
+// pyo3 0.21 generates `unsafe fn` wrappers that internally call unsafe fns;
+// the crate-level `#![deny(unsafe_op_in_unsafe_fn)]` rejects this on Rust 2021
+// even though the callers never use `unsafe {}` themselves.  Allow the pattern
+// only for this module.
+#![allow(unsafe_op_in_unsafe_fn)]
+
+use pyo3::exceptions::{PyRuntimeError, PyTimeoutError, PyValueError};
+use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict, PyList};
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::oneshot;
+
+use crate::codec::{pack_request, OwnedTensor, RpcRequestHeader, TensorView, WireVersion};
+use crate::protocol::WireError;
+use crate::runtime::WireRuntime;
+use crate::transport::{connect, rpc_call, TransportError};
+
+#[derive(Debug, thiserror::Error)]
+enum PyWireError {
+    #[error("transport error: {0}")]
+    Transport(#[from] TransportError),
+    #[error("wire error: {0}")]
+    Wire(#[from] WireError),
+    #[error("URI parse error: {0}")]
+    UriParse(String),
+    #[error("future already consumed")]
+    AlreadyConsumed,
+    #[error("future cancelled")]
+    Cancelled,
+    #[error("timeout")]
+    Timeout,
+    #[error("buffer protocol error: {0}")]
+    #[allow(dead_code)]
+    Buffer(String),
+}
+
+impl From<PyWireError> for PyErr {
+    fn from(e: PyWireError) -> Self {
+        match &e {
+            PyWireError::Timeout => PyTimeoutError::new_err(e.to_string()),
+            PyWireError::UriParse(_) | PyWireError::Buffer(_) => {
+                PyValueError::new_err(e.to_string())
+            }
+            _ => PyRuntimeError::new_err(e.to_string()),
+        }
+    }
+}
+
+#[pyclass(name = "TlsConfig")]
+#[derive(Clone)]
+pub struct PyTlsConfig {
+    cert_der: Vec<u8>,
+    server_name: String,
+}
+
+#[pymethods]
+impl PyTlsConfig {
+    #[new]
+    fn new(cert_der: Vec<u8>, server_name: String) -> Self {
+        Self {
+            cert_der,
+            server_name,
+        }
+    }
+}
+
+#[pyclass(name = "Result")]
+pub struct PyRpcResult {
+    #[pyo3(get)]
+    pub elapsed_us: u64,
+    aux: Vec<u8>,
+    tensors: Vec<OwnedTensor>,
+}
+
+#[pymethods]
+impl PyRpcResult {
+    #[getter]
+    fn aux<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new_bound(py, &self.aux)
+    }
+
+    /// Returns a list of `bytes` objects (one per tensor). Plan 1: bytes-for-bytes
+    /// fidelity is what callers need; Plan 2 layers numpy/torch unpacking on top.
+    fn tensors<'py>(&self, py: Python<'py>) -> Bound<'py, PyList> {
+        let items: Vec<Bound<PyBytes>> = self
+            .tensors
+            .iter()
+            .map(|t| PyBytes::new_bound(py, &t.bytes))
+            .collect();
+        PyList::new_bound(py, items)
+    }
+}
+
+#[pyclass(name = "Future")]
+pub struct PyFuture {
+    rx: Mutex<Option<oneshot::Receiver<Result<PyRpcResult, PyWireError>>>>,
+    cancelled: Arc<AtomicBool>,
+    sender_finished: Arc<AtomicBool>,
+}
+
+#[pymethods]
+impl PyFuture {
+    #[pyo3(signature = (timeout = None))]
+    fn result(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<PyRpcResult> {
+        let rx = self
+            .rx
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| PyErr::from(PyWireError::AlreadyConsumed))?;
+        py.allow_threads(move || -> PyResult<PyRpcResult> {
+            let outcome = match timeout {
+                None => WireRuntime::shared().block_on(rx),
+                Some(secs) => {
+                    let dur = Duration::from_secs_f64(secs);
+                    WireRuntime::shared().block_on(async move {
+                        match tokio::time::timeout(dur, rx).await {
+                            Ok(v) => v,
+                            Err(_) => Ok(Err(PyWireError::Timeout)),
+                        }
+                    })
+                }
+            };
+            match outcome {
+                Ok(Ok(v)) => Ok(v),
+                Ok(Err(e)) => Err(e.into()),
+                Err(_) => Err(PyErr::from(PyWireError::Cancelled)),
+            }
+        })
+    }
+
+    fn cancel(&self) -> bool {
+        let was = self.cancelled.swap(true, Ordering::AcqRel);
+        !was
+    }
+
+    fn done(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire) || self.sender_finished.load(Ordering::Acquire)
+    }
+}
+
+#[pyclass(name = "Dispatcher")]
+pub struct PyDispatcher {
+    target_uri: String,
+    tls: PyTlsConfig,
+}
+
+#[pymethods]
+impl PyDispatcher {
+    /// Construct a dispatcher pointing at `quic://host:port`.
+    #[new]
+    #[pyo3(signature = (target_uri, tls))]
+    fn new(target_uri: String, tls: PyTlsConfig) -> PyResult<Self> {
+        if !target_uri.starts_with("quic://") {
+            return Err(PyErr::from(PyWireError::UriParse(format!(
+                "only quic:// is supported in v1, got: {target_uri}"
+            ))));
+        }
+        Ok(Self { target_uri, tls })
+    }
+
+    /// Submit an RPC.
+    /// `tensors` is a list of dicts `{"shape": [...], "dtype_id": int, "device_id": int, "data": bytes}`
+    /// (or 4-tuples in the same order); `aux_payload` is opaque bytes.
+    #[pyo3(signature = (handler_id, tensors, aux_payload, timeout_ms = None))]
+    fn submit(
+        &self,
+        _py: Python<'_>,
+        handler_id: u32,
+        tensors: Vec<TensorTuple>,
+        aux_payload: Vec<u8>,
+        timeout_ms: Option<u32>,
+    ) -> PyResult<PyFuture> {
+        let target = parse_quic_uri(&self.target_uri)?;
+        let cert = self.tls.cert_der.clone();
+        let server_name = self.tls.server_name.clone();
+
+        let header = RpcRequestHeader {
+            version: WireVersion::V1,
+            request_id: next_request_id(),
+            handler_id,
+            n_tensors: tensors.len() as u32,
+            aux_payload_bytes: aux_payload.len() as u32,
+            deadline_ms: timeout_ms,
+            trace_id: 0,
+        };
+        let request_bytes = {
+            let tensor_views: Vec<TensorView<'_>> =
+                tensors.iter().map(TensorTuple::as_view).collect();
+            pack_request(&header, &tensor_views, &aux_payload)
+                .map_err(|e| PyRuntimeError::new_err(format!("pack: {e}")))?
+        };
+
+        let (tx, rx) = oneshot::channel::<Result<PyRpcResult, PyWireError>>();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let sender_finished = Arc::new(AtomicBool::new(false));
+        let cancelled_clone = Arc::clone(&cancelled);
+        let sf_clone = Arc::clone(&sender_finished);
+
+        WireRuntime::shared().spawn(async move {
+            let result = run_rpc(&target, &server_name, &cert, request_bytes).await;
+            sf_clone.store(true, Ordering::Release);
+            if !cancelled_clone.load(Ordering::Acquire) {
+                let _ = tx.send(result);
+            }
+        });
+
+        Ok(PyFuture {
+            rx: Mutex::new(Some(rx)),
+            cancelled,
+            sender_finished,
+        })
+    }
+}
+
+/// Minimal Python representation of one tensor.
+/// Accepts either a dict `{"shape", "dtype_id", "device_id", "data"}` or a tuple `(shape, dtype_id, device_id, data)`.
+struct TensorTuple {
+    shape: Vec<u32>,
+    dtype_id: u8,
+    device_id: u8,
+    data: Vec<u8>,
+}
+
+impl<'py> FromPyObject<'py> for TensorTuple {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Ok(dict) = ob.downcast::<PyDict>() {
+            let shape: Vec<u32> = dict
+                .get_item("shape")?
+                .ok_or_else(|| PyValueError::new_err("missing 'shape'"))?
+                .extract()?;
+            let dtype_id: u8 = dict
+                .get_item("dtype_id")?
+                .ok_or_else(|| PyValueError::new_err("missing 'dtype_id'"))?
+                .extract()?;
+            let device_id: u8 = dict
+                .get_item("device_id")?
+                .ok_or_else(|| PyValueError::new_err("missing 'device_id'"))?
+                .extract()?;
+            let data: Vec<u8> = dict
+                .get_item("data")?
+                .ok_or_else(|| PyValueError::new_err("missing 'data'"))?
+                .extract()?;
+            return Ok(Self {
+                shape,
+                dtype_id,
+                device_id,
+                data,
+            });
+        }
+        let tup: (Vec<u32>, u8, u8, Vec<u8>) = ob.extract()?;
+        Ok(Self {
+            shape: tup.0,
+            dtype_id: tup.1,
+            device_id: tup.2,
+            data: tup.3,
+        })
+    }
+}
+
+impl TensorTuple {
+    fn as_view(&self) -> TensorView<'_> {
+        use crate::codec::{Device, Dtype};
+        let dtype = match self.dtype_id {
+            0 => Dtype::F32,
+            1 => Dtype::F16,
+            2 => Dtype::BF16,
+            3 => Dtype::F8E4M3,
+            10 => Dtype::I64,
+            11 => Dtype::I32,
+            12 => Dtype::U8,
+            13 => Dtype::Bool,
+            _ => Dtype::U8,
+        };
+        let device = match self.device_id {
+            0 => Device::Cpu,
+            other => Device::Cuda(other - 1),
+        };
+        TensorView::new(self.shape.clone(), dtype, device, &self.data)
+    }
+}
+
+fn parse_quic_uri(uri: &str) -> PyResult<SocketAddr> {
+    let stripped = uri
+        .strip_prefix("quic://")
+        .ok_or_else(|| PyErr::from(PyWireError::UriParse(format!("not a quic:// uri: {uri}"))))?;
+    stripped
+        .parse::<SocketAddr>()
+        .map_err(|e| PyErr::from(PyWireError::UriParse(format!("bad quic uri {uri}: {e}"))))
+}
+
+fn next_request_id() -> u64 {
+    use std::sync::atomic::AtomicU64;
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+async fn run_rpc(
+    target: &SocketAddr,
+    server_name: &str,
+    trusted_cert: &[u8],
+    request_bytes: Vec<u8>,
+) -> Result<PyRpcResult, PyWireError> {
+    let conn = connect(*target, server_name, trusted_cert).await?;
+    let resp = rpc_call(&conn, request_bytes).await?;
+    parse_response(&resp)
+}
+
+fn parse_response(buf: &[u8]) -> Result<PyRpcResult, PyWireError> {
+    use crate::codec::{RpcResponseHeader, TensorDesc};
+    let mut cursor = 0usize;
+    let read_u32 = |cur: &mut usize, buf: &[u8]| -> Result<u32, PyWireError> {
+        if buf.len() < *cur + 4 {
+            return Err(PyWireError::Wire(WireError::DecodeFailed {
+                what: "response prefix".into(),
+                detail: "truncated".into(),
+            }));
+        }
+        let v = u32::from_le_bytes([buf[*cur], buf[*cur + 1], buf[*cur + 2], buf[*cur + 3]]);
+        *cur += 4;
+        Ok(v)
+    };
+    let h_len = read_u32(&mut cursor, buf)? as usize;
+    let header: RpcResponseHeader =
+        postcard::from_bytes(&buf[cursor..cursor + h_len]).map_err(|e| {
+            PyWireError::Wire(WireError::DecodeFailed {
+                what: "response header".into(),
+                detail: e.to_string(),
+            })
+        })?;
+    cursor += h_len;
+    let descs_len = read_u32(&mut cursor, buf)? as usize;
+    let descs: Vec<TensorDesc> =
+        postcard::from_bytes(&buf[cursor..cursor + descs_len]).map_err(|e| {
+            PyWireError::Wire(WireError::DecodeFailed {
+                what: "response descriptors".into(),
+                detail: e.to_string(),
+            })
+        })?;
+    cursor += descs_len;
+    let mut tensors = Vec::with_capacity(descs.len());
+    for d in descs {
+        let n = d.n_bytes as usize;
+        if buf.len() < cursor + n {
+            return Err(PyWireError::Wire(WireError::DecodeFailed {
+                what: "response tensor bytes".into(),
+                detail: format!("expected {n}, got {}", buf.len() - cursor),
+            }));
+        }
+        let bytes = buf[cursor..cursor + n].to_vec();
+        cursor += n;
+        tensors.push(OwnedTensor::new(d, bytes));
+    }
+    let aux_len = header.aux_payload_bytes as usize;
+    if buf.len() < cursor + aux_len {
+        return Err(PyWireError::Wire(WireError::DecodeFailed {
+            what: "response aux".into(),
+            detail: format!("expected {aux_len}, got {}", buf.len() - cursor),
+        }));
+    }
+    let aux = buf[cursor..cursor + aux_len].to_vec();
+    Ok(PyRpcResult {
+        elapsed_us: header.elapsed_us,
+        aux,
+        tensors,
+    })
+}
