@@ -26,10 +26,10 @@ smallvec = { workspace = true }
 half = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
 # criterion is commented out for Task 1 — see workspace Cargo.toml note.
 # Task 14 (benches) will re-enable this once the toolchain is upgraded.
 # criterion = { workspace = true }
