@@ -34,3 +34,6 @@ models/
 *.pyd
 .python-version
 .venv/
+
+# Internal design docs / plans — kept locally, not pushed.
+docs/superpowers/
