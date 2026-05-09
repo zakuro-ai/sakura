@@ -27,13 +27,27 @@ from sakura.events import (
 )
 from sakura.runtime import SakuraRuntime
 from sakura.service import BaseService, Service
+from sakura.services import (
+    ActivationCheckpoint,
+    AsyncCheckpoint,
+    AsyncEval,
+    Compile,
+    MixedPrecision,
+    Telemetry,
+    ZeRO1,
+)
 
 __all__ = [
+    "ActivationCheckpoint",
+    "AsyncCheckpoint",
+    "AsyncEval",
     "BaseService",
+    "Compile",
     "Compute",
     "Dispatcher",
     "Event",
     "Future",
+    "MixedPrecision",
     "OnEpochBegin",
     "OnEpochEnd",
     "OnError",
@@ -45,6 +59,8 @@ __all__ = [
     "Result",
     "SakuraRuntime",
     "Service",
+    "Telemetry",
+    "ZeRO1",
     "__build__",
     "__version__",
 ]
