@@ -233,6 +233,10 @@ sakura-bench run --workload mnist-mlp --runner baseline --framework pytorch-ddp 
 sakura-bench run --workload cifar10-resnet50 --runner sakura --framework pytorch-ddp \
     --service telemetry --service mixed_precision:bf16 --output reports/
 
+# sakura overlapping per-epoch eval with next-epoch training (1.57x on CPU; see "Measured results")
+sakura-bench run --workload mnist-mlp-multi --runner sakura --framework pytorch-ddp \
+    --service async_eval:thread --output reports/
+
 # HuggingFace Trainer baseline (HF-shaped workload required)
 sakura-bench run --workload distilbert-sst2-hf --runner baseline --framework hf-trainer \
     --output reports/
@@ -249,7 +253,7 @@ sakura-bench compare reports/cifar10-resnet50-baseline-pytorch-ddp.json \
 sakura-bench export reports/*.json
 ```
 
-Available workloads: `mnist-mlp`, `cifar10-resnet50`, `distilbert-sst2`, `distilbert-sst2-hf`, `distilbert-glue`, `llama3-1b-finetune`, `mistral-7b-lora`. Available frameworks: `pytorch-ddp`, `lightning`, `hf-trainer`. The `hf-trainer` framework requires an HF-shaped workload — one whose `make_model()` returns a `transformers.PreTrainedModel` (or any model whose `forward(**batch)` returns an output with `.loss`) and whose loaders yield single-dict batches with a `labels` key. `distilbert-sst2-hf` is the reference HF-shaped workload; `distilbert-sst2` (with the wrapper) targets the pytorch-ddp / lightning loops.
+Available workloads: `mnist-mlp`, `mnist-mlp-multi`, `cifar10-resnet50`, `distilbert-sst2`, `distilbert-sst2-hf`, `distilbert-glue`, `llama3-1b-finetune`, `mistral-7b-lora`. Available frameworks: `pytorch-ddp`, `lightning`, `hf-trainer`. The `hf-trainer` framework requires an HF-shaped workload — one whose `make_model()` returns a `transformers.PreTrainedModel` (or any model whose `forward(**batch)` returns an output with `.loss`) and whose loaders yield single-dict batches with a `labels` key. `distilbert-sst2-hf` is the reference HF-shaped workload; `distilbert-sst2` (with the wrapper) targets the pytorch-ddp / lightning loops. `mnist-mlp-multi` is a multi-epoch synthetic workload sized so per-epoch eval ≈ per-epoch training cost — the regime where `AsyncEval` overlap pays off.
 
 ### Measured results (CPU)
 
@@ -263,23 +267,29 @@ After the runtime hot-path optimizations (cached CUDA detection, fast path for e
 
 (All within trial-to-trial noise; the practical claim is "no overhead.")
 
-The structural win arrives when there's something to overlap. `AsyncEval` + `ThreadDispatcher` runs the per-epoch evaluation on a background thread — torch's C++ kernels release the GIL so this is real parallelism on CPU — so eval overlaps with the next epoch's training:
-
-| Configuration | Median (5 epochs, 5 evals × 16k samples) | Speedup |
-|---|---|---|
-| baseline (eval blocks each epoch) | 733 ms | 1.00× |
-| sakura + AsyncEval + ThreadDispatcher | 584 ms | **1.26×** (−20% wallclock) |
-
-Median over 7 trials, `OMP_NUM_THREADS=2`. Reproduce with:
+The structural win arrives when there's something to overlap. `AsyncEval` + `ThreadDispatcher` runs the per-epoch evaluation on a background thread — torch's C++ kernels release the GIL so this is real parallelism on CPU — so eval overlaps with the next epoch's training. The win is reproducible from the CLI in two commands:
 
 ```bash
-OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 python scripts/bench_async_eval.py \
-    --epochs 5 --eval-batches 256 --trials 7
+OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 sakura-bench run \
+    --workload mnist-mlp-multi --runner baseline --framework pytorch-ddp \
+    --output reports/
+
+OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 sakura-bench run \
+    --workload mnist-mlp-multi --runner sakura --framework pytorch-ddp \
+    --service async_eval:thread --output reports/
+
+sakura-bench compare reports/mnist-mlp-multi-baseline-pytorch-ddp.json \
+                     reports/mnist-mlp-multi-sakura-pytorch-ddp.json
 ```
 
-The win comes from N−1 of the N evals finishing during training time that would have happened anyway. The sweet spot is when per-epoch eval cost is comparable to per-epoch training cost; if eval is much heavier than training, AsyncEval's backpressure forces the next epoch to wait, and the speedup shrinks.
+| Configuration | Median (5 epochs, 5 evals × 16k samples, 256-hidden MLP) | Speedup |
+|---|---|---|
+| baseline (eval blocks each epoch) | 1179 ms | 1.00× |
+| sakura + `--service async_eval:thread` | 750 ms | **1.57×** (−36% wallclock) |
 
-**Honest framing.** The wins above are CPU microbenchmarks. The headline claims for the perf tier (`cifar10-resnet50` full, `distilbert-glue`, `llama3-1b-finetune`) still require GPU validation that hasn't happened in this release. The CPU result demonstrates that the overlap pattern is real and works; whether it scales to a 26% wallclock reduction on real GPU workloads — where eval / training cost ratios differ — is unverified.
+Median over 7 trials, `OMP_NUM_THREADS=2`. Identical val_acc at convergence (eval is correct — only the timing changes). The win comes from N−1 of the N evals finishing during training time that would have happened anyway. The sweet spot is when per-epoch eval cost is comparable to per-epoch training cost; if eval is much heavier than training, AsyncEval's backpressure forces the next epoch to wait and the speedup shrinks.
+
+**Honest framing.** The wins above are CPU microbenchmarks. The headline claims for the perf tier (`cifar10-resnet50` full, `distilbert-glue`, `llama3-1b-finetune`) still require GPU validation that hasn't happened in this release. The CPU result demonstrates that the overlap pattern is real, ships in the CLI, and survives a clean wallclock comparison; whether it scales to a similar speedup on real GPU workloads — where eval / training cost ratios differ — is unverified.
 
 ### Known limitations
 

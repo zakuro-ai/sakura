@@ -91,4 +91,99 @@ def make_workload(*, batch_size: int = 64, epochs: int = 1) -> Workload:
     )
 
 
-__all__ = ["make_workload"]
+def _make_model_multi() -> torch.nn.Module:
+    """Slightly bigger MLP for the AsyncEval overlap demo.
+
+    Forward pass cost must be dominated by tensor matmul (GIL-released by
+    torch's C++ kernels) rather than Python overhead, otherwise the
+    background eval thread can't actually run in parallel with the main
+    training thread. 256-hidden gets us there on CPU at modest size.
+    """
+    return torch.nn.Sequential(
+        torch.nn.Linear(128, 256),
+        torch.nn.ReLU(),
+        torch.nn.Linear(256, 256),
+        torch.nn.ReLU(),
+        torch.nn.Linear(256, 10),
+    )
+
+
+def _make_synthetic_tensor_loaders(
+    batch_size: int, n_train: int, n_val: int, n_features: int,
+):
+    """Plain torch.TensorDataset loaders — no PIL.
+
+    The standard MNIST workload uses torchvision/PIL transforms which hold
+    the GIL during decode; that defeats thread-based eval/train overlap.
+    The multi-epoch overlap workload uses pure tensor data so the train
+    and eval threads share only torch C++ kernels (which release the GIL).
+    """
+    torch.manual_seed(0)
+    train_x = torch.randn(n_train, n_features)
+    train_y = torch.randint(0, 10, (n_train,))
+    val_x = torch.randn(n_val, n_features)
+    val_y = torch.randint(0, 10, (n_val,))
+    train_loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(train_x, train_y),
+        batch_size=batch_size, shuffle=False,
+    )
+    val_loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(val_x, val_y),
+        batch_size=batch_size,
+    )
+    return train_loader, val_loader
+
+
+def _eval_fn_multi(model: torch.nn.Module, loader) -> dict:
+    """Eval over (x, y) tuples on a tensor loader. Same semantics as
+    `_eval_fn` but skips the .to(device) calls already handled by
+    `_DeviceLoader`."""
+    model.eval()
+    correct = total = 0
+    loss_sum = 0.0
+    with torch.no_grad():
+        for x, y in loader:
+            logits = model(x)
+            loss_sum += float(torch.nn.functional.cross_entropy(logits, y, reduction="sum"))
+            correct += int((logits.argmax(dim=-1) == y).sum())
+            total += int(y.numel())
+    return {
+        "val_loss": loss_sum / max(total, 1),
+        "val_acc": correct / max(total, 1),
+    }
+
+
+def make_workload_multi(
+    *, batch_size: int = 64, epochs: int = 5, n_train: int = 2048, n_val: int = 16384,
+    n_features: int = 128,
+) -> Workload:
+    """Multi-epoch synthetic workload where per-epoch eval cost ≈ train cost.
+
+    Designed to expose the AsyncEval overlap win: with 5 epochs and an eval
+    set 8× larger than train, per-epoch eval is the dominant blocking
+    operation in a baseline loop. Sakura+AsyncEval+ThreadDispatcher overlaps
+    eval(N) with train(N+1), saving most of the per-epoch eval time.
+
+    Pure tensor data (no PIL) is intentional — PIL holds the GIL during
+    decode and would prevent the eval thread from actually running in
+    parallel with training. With tensor data, both threads share only
+    torch's C++ kernels which release the GIL during compute.
+
+    Default shape (2k train / 16k val × 5 epochs, 256-hidden MLP) reproduces
+    the README's measured 1.26x AsyncEval speedup at OMP_NUM_THREADS=2.
+    """
+    train_loader, val_loader = _make_synthetic_tensor_loaders(
+        batch_size=batch_size, n_train=n_train, n_val=n_val, n_features=n_features,
+    )
+    return Workload(
+        name="mnist-mlp-multi",
+        tier="smoke",
+        make_model=_make_model_multi,
+        make_train_loader=lambda: train_loader,
+        make_val_loader=lambda: val_loader,
+        eval_fn=_eval_fn_multi,
+        epochs=epochs,
+    )
+
+
+__all__ = ["make_workload", "make_workload_multi"]
