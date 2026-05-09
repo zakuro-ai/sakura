@@ -1,6 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use sakura_wire::codec::{
-    pack_request, unpack_request, Device, Dtype, RpcRequestHeader, TensorView, WireVersion,
+    pack_request, pack_request_zero_copy, unpack_request, Device, Dtype, RpcRequestHeader,
+    TensorView, WireVersion,
 };
 use smallvec::smallvec;
 
@@ -53,5 +54,27 @@ fn bench_unpack(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_pack, bench_unpack);
+fn bench_pack_zero_copy(c: &mut Criterion) {
+    let mut group = c.benchmark_group("codec_pack_zero_copy_268mb");
+    group.throughput(Throughput::Bytes(268 * 1024 * 1024));
+    let buf = make_state_dict_buf(268);
+    let header = RpcRequestHeader {
+        version: WireVersion::V1,
+        request_id: 1,
+        handler_id: 0xDEAD,
+        n_tensors: 1,
+        aux_payload_bytes: 0,
+        deadline_ms: None,
+        trace_id: 0,
+    };
+    group.bench_function("pack_zero_copy", |b| {
+        b.iter(|| {
+            let view = TensorView::new(smallvec![268_435_456u32], Dtype::U8, Device::Cpu, &buf);
+            let _ = pack_request_zero_copy(&header, &[view], &[]).unwrap();
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(benches, bench_pack, bench_unpack, bench_pack_zero_copy);
 criterion_main!(benches);
