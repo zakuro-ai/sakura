@@ -14,12 +14,21 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Literal, Optional
 
 
+_CUDA_AVAILABLE: Optional[bool] = None
+
+
 def _cuda_available() -> bool:
-    try:
-        import torch
-        return bool(torch.cuda.is_available())
-    except Exception:
-        return False
+    """Cached torch.cuda.is_available() — first call probes NVML (~5ms);
+    subsequent calls are O(1). The harness queries this 4-7 times per
+    RunReport so caching matters at smoke scale."""
+    global _CUDA_AVAILABLE
+    if _CUDA_AVAILABLE is None:
+        try:
+            import torch
+            _CUDA_AVAILABLE = bool(torch.cuda.is_available())
+        except Exception:
+            _CUDA_AVAILABLE = False
+    return _CUDA_AVAILABLE
 
 
 @dataclass
@@ -70,9 +79,9 @@ def detect_hardware() -> dict:
         "platform": platform.platform(),
         "python": platform.python_version(),
         "torch": torch.__version__,
-        "cuda_available": bool(torch.cuda.is_available()),
+        "cuda_available": bool(_cuda_available()),
     }
-    if torch.cuda.is_available():
+    if _cuda_available():
         info["gpu_count"] = torch.cuda.device_count()
         try:
             info["gpu_name"] = torch.cuda.get_device_name(0)
@@ -143,7 +152,7 @@ class BaselineRunner:
         val_loader = workload.make_val_loader()
         opt = self._make_optimizer(model)
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = "cuda" if _cuda_available() else "cpu"
         model = model.to(device)
 
         t0 = time.perf_counter()
@@ -371,7 +380,7 @@ class BaselineRunner:
     @staticmethod
     def _peak_gpu_mem_mb() -> float:
         import torch
-        if torch.cuda.is_available():
+        if _cuda_available():
             return torch.cuda.max_memory_allocated() / (1024 * 1024)
         return 0.0
 
@@ -441,7 +450,7 @@ class SakuraRunner(BaselineRunner):
         val_loader = workload.make_val_loader()
         opt = self._make_optimizer(model)
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = "cuda" if _cuda_available() else "cpu"
         model = model.to(device)
 
         adapter = DDPAdapter(rt, rank=0, world_size=1)
