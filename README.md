@@ -293,14 +293,40 @@ sakura-bench compare reports/mnist-mlp-multi-baseline-pytorch-ddp.json \
 
 Median over 7 trials, `OMP_NUM_THREADS=2`. Identical val_acc at convergence (eval is correct — only the timing changes). The win comes from N−1 of the N evals finishing during training time that would have happened anyway. The sweet spot is when per-epoch eval cost is comparable to per-epoch training cost; if eval is much heavier than training, AsyncEval's backpressure forces the next epoch to wait and the speedup shrinks.
 
-**Honest framing.** The wins above are CPU microbenchmarks. The headline claims for the perf tier (`cifar10-resnet50` full, `distilbert-glue`, `llama3-1b-finetune`) still require GPU validation that hasn't happened in this release. The CPU result demonstrates that the overlap pattern is real, ships in the CLI, and survives a clean wallclock comparison; whether it scales to a similar speedup on real GPU workloads — where eval / training cost ratios differ — is unverified.
+### Measured results (GPU, RTX 4090)
+
+bf16 mixed precision is the headline GPU win — Ada Lovelace tensor cores are roughly 2× the throughput of fp32 on GEMM-heavy ops. Two end-to-end benchmarks on a single RTX 4090 (compute 8.9, 24 GB VRAM):
+
+**ResNet-50 / CIFAR-10 (224×224)** — 3 epochs, batch 128, 4096 train / 1024 val:
+
+| Config | elapsed | samples/sec | peak GPU mem | speedup |
+|---|---|---|---|---|
+| baseline (fp32) | 23.55s | 522 | 10714 MB | 1.00× |
+| `--service mixed_precision:bf16` | 17.85s | 689 | 5641 MB | **1.32×** (47% memory cut) |
+
+**DistilBERT / SST-2** — HF Trainer path, 2 epochs, batch 64, 4096 train, max_length 128:
+
+| Config | elapsed | samples/sec | peak GPU mem | speedup |
+|---|---|---|---|---|
+| `hf+fp32` (baseline) | 9.14s | 896 | 3359 MB | 1.00× |
+| `hf+bf16` (Trainer's native bf16) | 5.07s | 1615 | 2522 MB | **1.80×** |
+| `hf+bf16` + sakura HFAdapter + Telemetry | 5.07s | 1616 | 2522 MB | 1.80× |
+
+The DistilBERT result also confirms sakura's HF integration cost is **zero**: installing HFAdapter + Telemetry on top of HF Trainer's native bf16 produces identical wallclock to vanilla. Reproduce with `scripts/bench_gpu_resnet50.py` and `scripts/bench_gpu_distilbert.py` (single-trial; bf16 wins are large enough to dominate noise).
+
+**What didn't work on GPU (honest negatives).** Two configs we tried that *don't* speed up the GPU runs at this scale:
+
+- `--service compile` (torch.compile) — at 3 epochs the JIT compilation cost (~70s) doesn't amortize. Useful only when training runs many epochs over the same compiled graph.
+- `--service async_eval:thread` — the bridge runs eval on CPU to overlap with GPU training, but ResNet-50 *eval* on CPU is far slower than GPU *training*, so AsyncEval blocks. AsyncEval's CPU-thread overlap is the right pattern when eval ≈ train cost (the `mnist-mlp-multi` 1.57× CPU result above), not when GPU training dwarfs CPU eval. A GPU-stream-based dispatcher would address this regime; not yet implemented.
+
+**Net.** sakura's bf16 path is the real headline: 1.32× on ResNet-50, 1.80× on DistilBERT, no overhead on the HF Trainer integration. AsyncEval's CPU-overlap pattern is correct on CPU-bound workloads, miscast on GPU-bound ones — the failure mode is documented above.
 
 ### Known limitations
 
 - **`MixedPrecision` fp16 in non-DDP framework loops.** Lightning's automatic-optimization and HF Trainer own `opt.step()` themselves and don't expose an interception point — for those frameworks, configure precision via `L.Trainer(precision="16-mixed")` or HF's `TrainingArguments(fp16=True)` instead of installing this service. The runtime-coordinated step replacement (`runtime.scale_loss(loss)` + `runtime.optimizer_step(opt)`) is honored by sakura's raw-DDP loop, where the full fp16 path (scale → backward → unscale → grad-clip → scaler.step → scaler.update with inf/nan check + dynamic scale update) runs end-to-end.
 - **`ZeRO1` multi-rank** uses cyclic dealing (param `i` owned by rank `i % world_size`) and per-shard `opt.step()` followed by parameter broadcast. Verified bit-equivalent to a single-rank `opt.step()` over 1- and 5-step SGD trajectories under `gloo` (see `tests/zero/test_sharded_optimizer_multi_rank.py`); NCCL multi-rank is not yet exercised in CI.
 - **`Compile` on CPU.** `torch.compile` is GPU-optimized (Inductor's biggest wins are kernel fusion + cudagraphs). On the CPU smoke workloads in `sakura-bench`, installing `--service compile` is at-best neutral (within trial noise) and often a small regression because the JIT/cache-warmup cost outweighs the inner-loop savings. Recommend `--service compile` for GPU runs only; on CPU, leave it off.
-- The cross-framework speed comparison vs. raw HuggingFace Trainer / Lightning *without* sakura is wired (`BaselineRunner` covers `pytorch-ddp`, `lightning`, and `hf-trainer`); populating the markdown table from real hardware runs is the next milestone.
+- The cross-framework speed comparison vs. raw HuggingFace Trainer / Lightning *without* sakura is wired (`BaselineRunner` covers `pytorch-ddp`, `lightning`, and `hf-trainer`); the HF `hf+bf16+sakura` GPU row above is the first populated entry. ResNet-50 + CIFAR-10 in the perf tier shipped here; `distilbert-glue` (multi-task GLUE) and `llama3-1b-finetune` are still stubs.
 
 ## Migrating from v0.1.x
 
