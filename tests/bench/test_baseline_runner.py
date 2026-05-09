@@ -74,9 +74,101 @@ def test_baseline_runner_lightning_completes():
     assert "val_acc" in report.final_metrics
 
 
-def test_baseline_runner_hf_trainer_raises_with_clear_message():
-    """HF Trainer baseline requires HF-shaped workloads; raises clear NotImplementedError."""
-    wl = _make_synthetic_workload()
+def _make_hf_synthetic_workload() -> Workload:
+    """HF-shaped synthetic workload: tiny model that returns ModelOutput-like dict.
+
+    Avoids dragging in 66M DistilBERT params just for a smoke test.
+    """
+    class _TinyHFModel(torch.nn.Module):
+        def __init__(self, vocab=100, dim=8, n_classes=2):
+            super().__init__()
+            self.embed = torch.nn.Embedding(vocab, dim)
+            self.head = torch.nn.Linear(dim, n_classes)
+
+        def forward(self, input_ids, attention_mask=None, labels=None, **kwargs):
+            x = self.embed(input_ids).mean(dim=1)
+            logits = self.head(x)
+            out = {"logits": logits}
+            if labels is not None:
+                out["loss"] = torch.nn.functional.cross_entropy(logits, labels)
+            return out
+
+    def make_model():
+        return _TinyHFModel()
+
+    def collate(rows):
+        return {
+            "input_ids": torch.stack([r["input_ids"] for r in rows]),
+            "attention_mask": torch.stack([r["attention_mask"] for r in rows]),
+            "labels": torch.stack([r["labels"] for r in rows]),
+        }
+
+    def make_loader():
+        torch.manual_seed(0)
+        n, seq_len = 8, 4
+
+        class _DS(torch.utils.data.Dataset):
+            def __len__(self_):
+                return n
+
+            def __getitem__(self_, i):
+                return {
+                    "input_ids": torch.randint(0, 100, (seq_len,)),
+                    "attention_mask": torch.ones(seq_len, dtype=torch.long),
+                    "labels": torch.randint(0, 2, ()),
+                }
+
+        return torch.utils.data.DataLoader(_DS(), batch_size=4, collate_fn=collate)
+
+    def eval_fn(model, loader):
+        model.eval()
+        correct = total = 0
+        with torch.no_grad():
+            for batch in loader:
+                out = model(**batch)
+                correct += int((out["logits"].argmax(dim=-1) == batch["labels"]).sum())
+                total += int(batch["labels"].numel())
+        return {"val_acc": correct / max(total, 1)}
+
+    return Workload(
+        name="hf-synthetic-tiny",
+        tier="smoke",
+        make_model=make_model,
+        make_train_loader=make_loader,
+        make_val_loader=make_loader,
+        eval_fn=eval_fn,
+        epochs=1,
+    )
+
+
+def test_baseline_runner_hf_trainer_completes():
+    """HF Trainer baseline runs end-to-end on an HF-shaped synthetic workload."""
+    pytest.importorskip("transformers")
+    wl = _make_hf_synthetic_workload()
     runner = BaselineRunner(framework="hf-trainer")
-    with pytest.raises(NotImplementedError, match=r"PreTrainedModel"):
-        runner.run(wl)
+    report = runner.run(wl)
+
+    assert report.workload == "hf-synthetic-tiny"
+    assert report.framework == "hf-trainer"
+    assert report.elapsed_secs > 0
+    assert report.samples_per_sec > 0
+    assert "val_acc" in report.final_metrics
+
+
+def test_baseline_runner_hf_trainer_rejects_non_dataloader():
+    """HF Trainer path requires loaders to be DataLoaders (we read .dataset off them)."""
+    pytest.importorskip("transformers")
+    wl = _make_synthetic_workload()  # generic (x,y) tuple workload
+    # Strip the .dataset attribute by replacing make_train_loader with one that
+    # returns a plain iterable — Trainer needs a real Dataset.
+    bad = Workload(
+        name="bad-hf", tier="smoke",
+        make_model=wl.make_model,
+        make_train_loader=lambda: iter([]),
+        make_val_loader=wl.make_val_loader,
+        eval_fn=wl.eval_fn,
+        epochs=1,
+    )
+    runner = BaselineRunner(framework="hf-trainer")
+    with pytest.raises(ValueError, match=r"DataLoader"):
+        runner.run(bad)
