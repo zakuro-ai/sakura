@@ -107,28 +107,33 @@ class MixedPrecision(BaseService):
         pass
 
     def on_optimizer_step(self, event: OnOptimizerStep) -> None:
+        """Pre-step hook: unscale (fp16) and clip gradients.
+
+        IMPORTANT: this method does NOT call opt.step(). The framework's
+        training loop is responsible for calling opt.step() exactly once per
+        batch. Calling step here would result in double-stepping when the
+        adapter emits the OnOptimizerStep event before the loop's own step.
+
+        For the fp16 path, the GradScaler's step+update *should* replace the
+        loop's opt.step() — that's a known integration gap (services
+        currently can't override the loop's step). For now we unscale here
+        so the loop's opt.step() sees real gradients, but the scaler's
+        inf/nan check + scale-update doesn't run. Documented as a known
+        limitation in the README's MixedPrecision notes.
+        """
         opt = event.optimizer
-        # Path 1: with GradScaler (fp16/CUDA)
         if self._scaler is not None:
+            # fp16 + CUDA: unscale gradients in place so the loop's opt.step()
+            # operates on the real values. The scaler's inf/nan check is NOT
+            # performed; if a NaN appears the loop's step propagates it.
             self._scaler.unscale_(opt)
-            if self._grad_clip is not None:
-                import torch
-                params = []
-                for group in opt.param_groups:
-                    params.extend(group["params"])
-                torch.nn.utils.clip_grad_norm_(params, self._grad_clip)
-            self._scaler.step(opt)
-            self._scaler.update()
-            return
-        # Path 2: no scaler (bf16/fp8/auto)
         if self._grad_clip is not None:
             import torch
+
             params = []
             for group in opt.param_groups:
                 params.extend(group["params"])
             torch.nn.utils.clip_grad_norm_(params, self._grad_clip)
-        if hasattr(opt, "step"):
-            opt.step()
 
     # ............................................................. helpers
 
