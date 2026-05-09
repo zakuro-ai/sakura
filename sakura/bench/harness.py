@@ -154,9 +154,13 @@ class BaselineRunner:
 
         device = "cuda" if _cuda_available() else "cpu"
         model = model.to(device)
+        # Wrap val_loader so eval_fn receives device-placed batches even when
+        # the workload builds plain lists of CPU tensors.
+        dev_val_loader = _DeviceLoader(val_loader, device)
 
         t0 = time.perf_counter()
         n_samples = 0
+        final_metrics: dict = {}
         for _epoch in range(workload.epochs):
             model.train()
             for batch in train_loader:
@@ -167,13 +171,13 @@ class BaselineRunner:
                 loss.backward()
                 opt.step()
                 n_samples += y.size(0) if hasattr(y, "size") else len(y)
+            # Per-epoch synchronous eval — matches real-world training loops
+            # (early stopping, monitoring) and gives the sakura+AsyncEval
+            # comparison something legitimate to overlap against. The single
+            # end-of-training eval would be unfair to sakura.
+            model.eval()
+            final_metrics = workload.eval_fn(model, dev_val_loader)
         elapsed = time.perf_counter() - t0
-
-        model.eval()
-        # Wrap val_loader so eval_fn receives device-placed batches even when
-        # the workload builds plain lists of CPU tensors.
-        dev_val_loader = _DeviceLoader(val_loader, device)
-        final_metrics = workload.eval_fn(model, dev_val_loader)
 
         return RunReport(
             workload=workload.name,
@@ -453,6 +457,24 @@ class SakuraRunner(BaselineRunner):
         device = "cuda" if _cuda_available() else "cpu"
         model = model.to(device)
 
+        # If AsyncEval is installed and was wired via the bench-harness bridge
+        # (see _SERVICE_FACTORIES["async_eval"]), the per-epoch synchronous
+        # eval is skipped — AsyncEval handles eval on a background dispatcher
+        # so it overlaps with the next epoch's training. We feed it the
+        # current state_dict each epoch via the snapshot dict it carries.
+        async_eval_svc = rt.find("async_eval")
+        async_eval_bridge = getattr(async_eval_svc, "_bench_snapshot", None) \
+            if async_eval_svc is not None else None
+        async_eval_bridge_active = async_eval_bridge is not None
+        if async_eval_bridge_active:
+            # AsyncEval runs on a different execution context (thread or
+            # subprocess) than training. Pin both the model snapshot AND
+            # the val_loader to CPU so eval doesn't contend with training
+            # for the GPU — the entire point of the overlap is to use a
+            # different resource than the one currently doing training.
+            # The state_dict is already snapshotted to CPU per-epoch below.
+            async_eval_bridge["val_loader"] = _DeviceLoader(val_loader, "cpu")
+
         adapter = DDPAdapter(rt, rank=0, world_size=1)
         adapter.on_train_begin(model, opt, train_loader, val_loader=val_loader)
 
@@ -477,13 +499,25 @@ class SakuraRunner(BaselineRunner):
                 if not rt.optimizer_step(opt):
                     opt.step()
                 n_samples += y.size(0) if hasattr(y, "size") else len(y)
-            model.eval()
-            dev_val_loader = _DeviceLoader(val_loader, device)
-            metrics = workload.eval_fn(model, dev_val_loader)
+            if async_eval_bridge_active:
+                # Snapshot state_dict and let AsyncEval handle eval async.
+                async_eval_bridge["state_dict"] = {
+                    k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+                }
+                metrics = {}  # placeholder; final metrics pulled from AsyncEval.history
+            else:
+                model.eval()
+                dev_val_loader = _DeviceLoader(val_loader, device)
+                metrics = workload.eval_fn(model, dev_val_loader)
             adapter.on_epoch_end(epoch, model, opt, metrics=metrics)
 
-        elapsed = time.perf_counter() - t0
+        # AsyncEval drains pending evals during on_train_end; that drain time
+        # is part of the wallclock the user pays for. Stop the timer AFTER it.
         adapter.on_train_end(model)
+        elapsed = time.perf_counter() - t0
+        if async_eval_bridge_active and async_eval_svc.history:
+            metrics = {k: v for k, v in async_eval_svc.history[-1].items()
+                       if k not in ("epoch", "skipped", "reason")}
 
         return RunReport(
             workload=workload.name,
