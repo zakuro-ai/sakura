@@ -457,22 +457,25 @@ class SakuraRunner(BaselineRunner):
         device = "cuda" if _cuda_available() else "cpu"
         model = model.to(device)
 
-        # If AsyncEval is installed and was wired via the bench-harness bridge
-        # (see _SERVICE_FACTORIES["async_eval"]), the per-epoch synchronous
-        # eval is skipped — AsyncEval handles eval on a background dispatcher
-        # so it overlaps with the next epoch's training. We feed it the
-        # current state_dict each epoch via the snapshot dict it carries.
+        # Bench-harness bridges for the async services. Each service the CLI
+        # factory built carries a `_bench_snapshot` dict; the harness writes
+        # the current model state_dict into all of them after each epoch so
+        # AsyncEval / AsyncCheckpoint can run their work on a different
+        # execution context (thread / subprocess) without coordinating with
+        # the training loop further. AsyncEval also reads val_loader from
+        # its snapshot — pinned to CPU so eval doesn't contend with the
+        # training device for compute.
+        bridge_snapshots: list[dict] = []
+        for svc_name in ("async_eval", "async_checkpoint"):
+            svc = rt.find(svc_name)
+            snap = getattr(svc, "_bench_snapshot", None) if svc is not None else None
+            if snap is not None:
+                bridge_snapshots.append(snap)
         async_eval_svc = rt.find("async_eval")
         async_eval_bridge = getattr(async_eval_svc, "_bench_snapshot", None) \
             if async_eval_svc is not None else None
         async_eval_bridge_active = async_eval_bridge is not None
         if async_eval_bridge_active:
-            # AsyncEval runs on a different execution context (thread or
-            # subprocess) than training. Pin both the model snapshot AND
-            # the val_loader to CPU so eval doesn't contend with training
-            # for the GPU — the entire point of the overlap is to use a
-            # different resource than the one currently doing training.
-            # The state_dict is already snapshotted to CPU per-epoch below.
             async_eval_bridge["val_loader"] = _DeviceLoader(val_loader, "cpu")
 
         adapter = DDPAdapter(rt, rank=0, world_size=1)
@@ -499,12 +502,14 @@ class SakuraRunner(BaselineRunner):
                 if not rt.optimizer_step(opt):
                     opt.step()
                 n_samples += y.size(0) if hasattr(y, "size") else len(y)
+            if bridge_snapshots:
+                # Snapshot state_dict once, share across all bridged services.
+                sd = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                for snap in bridge_snapshots:
+                    snap["state_dict"] = sd
             if async_eval_bridge_active:
-                # Snapshot state_dict and let AsyncEval handle eval async.
-                async_eval_bridge["state_dict"] = {
-                    k: v.detach().cpu().clone() for k, v in model.state_dict().items()
-                }
-                metrics = {}  # placeholder; final metrics pulled from AsyncEval.history
+                # AsyncEval handles eval; final metrics pulled from its history at end.
+                metrics = {}
             else:
                 model.eval()
                 dev_val_loader = _DeviceLoader(val_loader, device)

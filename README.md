@@ -237,6 +237,10 @@ sakura-bench run --workload cifar10-resnet50 --runner sakura --framework pytorch
 sakura-bench run --workload mnist-mlp-multi --runner sakura --framework pytorch-ddp \
     --service async_eval:thread --output reports/
 
+# both async services together — eval + checkpoint dispatched off-thread per epoch
+sakura-bench run --workload mnist-mlp-multi --runner sakura --framework pytorch-ddp \
+    --service async_eval:thread --service async_checkpoint:thread --output reports/
+
 # HuggingFace Trainer baseline (HF-shaped workload required)
 sakura-bench run --workload distilbert-sst2-hf --runner baseline --framework hf-trainer \
     --output reports/
