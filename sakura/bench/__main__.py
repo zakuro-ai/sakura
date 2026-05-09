@@ -56,21 +56,7 @@ def _make_async_eval(kwarg, workload):
     """
     from sakura.services.async_eval import AsyncEval
 
-    kind = (kwarg or "thread").lower()
-    if kind == "thread":
-        from sakura.dispatch import ThreadDispatcher
-        dispatcher = ThreadDispatcher(max_workers=1)
-    elif kind == "local":
-        from sakura.dispatch import LocalDispatcher
-        dispatcher = LocalDispatcher()
-    elif kind == "in_thread":
-        from sakura.dispatch import InThreadDispatcher
-        dispatcher = InThreadDispatcher()
-    else:
-        raise ValueError(
-            f"async_eval dispatcher kind must be one of "
-            f"{{'thread', 'local', 'in_thread'}}, got {kwarg!r}"
-        )
+    dispatcher = _resolve_dispatcher(kwarg)
 
     # Bridge state: state_dict snapshot updated each epoch by the harness;
     # val_x / val_y materialized lazily on first eval call from val_loader.
@@ -137,6 +123,61 @@ def _make_async_eval(kwarg, workload):
     return svc
 
 
+def _resolve_dispatcher(kind):
+    """Map a CLI dispatcher kind string to a Dispatcher instance.
+
+    Shared by `async_eval` and `async_checkpoint` factories.
+    """
+    kind = (kind or "thread").lower()
+    if kind == "thread":
+        from sakura.dispatch import ThreadDispatcher
+        return ThreadDispatcher(max_workers=1)
+    if kind == "local":
+        from sakura.dispatch import LocalDispatcher
+        return LocalDispatcher()
+    if kind == "in_thread":
+        from sakura.dispatch import InThreadDispatcher
+        return InThreadDispatcher()
+    raise ValueError(
+        f"async dispatcher kind must be one of "
+        f"{{'thread', 'local', 'in_thread'}}, got {kind!r}"
+    )
+
+
+def _make_async_checkpoint(kwarg, workload):
+    """Build an AsyncCheckpoint that snapshots the model each epoch.
+
+    The harness loop populates `_bench_snapshot["state_dict"]` after each
+    epoch; AsyncCheckpoint's state_provider reads it. Writes go to a
+    per-run temp directory under the system tempdir; for production use
+    callers should construct AsyncCheckpoint directly with a real `dir`.
+
+    `kwarg` selects the dispatcher: `thread` (default), `local` (subprocess
+    over QUIC), or `in_thread` (synchronous, debug only — no overlap).
+    """
+    import tempfile
+    from sakura.services.async_checkpoint import AsyncCheckpoint
+
+    dispatcher = _resolve_dispatcher(kwarg)
+    snapshot: dict = {"state_dict": None, "val_loader": None,
+                      "val_x": None, "val_y": None}
+    out_dir = tempfile.mkdtemp(prefix=f"sakura-bench-ckpt-{workload.name}-")
+
+    def state_provider():
+        return snapshot["state_dict"]
+
+    svc = AsyncCheckpoint(
+        dir=out_dir,
+        dispatcher=dispatcher,
+        state_provider=state_provider,
+        every="epoch",
+        keep=None,  # bench mode: don't bother rotating; tempdir is disposable
+    )
+    svc._bench_snapshot = snapshot  # bridge surface — same shape as async_eval
+    svc._bench_out_dir = out_dir    # exposed for tests / cleanup
+    return svc
+
+
 _SERVICE_FACTORIES = {
     "telemetry": lambda kw, wl: __import__(
         "sakura.services.telemetry", fromlist=["Telemetry"]
@@ -154,6 +195,7 @@ _SERVICE_FACTORIES = {
         "sakura.services.zero1", fromlist=["ZeRO1"]
     ).ZeRO1(),
     "async_eval": _make_async_eval,
+    "async_checkpoint": _make_async_checkpoint,
 }
 
 
