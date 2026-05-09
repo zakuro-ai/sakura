@@ -37,6 +37,11 @@ jobs:
           python-version: "3.10"
       - name: Build wheel
         uses: PyO3/maturin-action@v1
+        env:
+          # Workaround for ring's ARM asm needing __ARM_ARCH defined when
+          # cross-compiling for aarch64-unknown-linux-gnu via maturin's
+          # manylinux docker image. Harmless on other targets.
+          CFLAGS_aarch64_unknown_linux_gnu: "-D__ARM_ARCH=8"
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --strip
