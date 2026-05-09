@@ -20,6 +20,9 @@ class _DummyModel:
     def parameters(self):
         return iter([_DummyParam()])
 
+    def forward(self, *args, **kwargs):
+        return None
+
 
 class _DummyOptimizer:
     def __init__(self):
@@ -49,7 +52,9 @@ class TestMixedPrecision:
         rt.dispatch(OnTrainStepBegin(model=_DummyModel(), batch=("x",), step=0,
                                       rank=0, world_size=1))
         rt.dispatch(OnOptimizerStep(optimizer=opt, rank=0, world_size=1))
-        assert opt.stepped == 1
+        # MixedPrecision must NOT call opt.step() — the framework's training loop
+        # is responsible for stepping. Calling it here would double-step.
+        assert opt.stepped == 0
         assert s._scaler is None  # bf16 = no scaler
 
     def test_fp16_creates_grad_scaler_if_cuda_available(self):

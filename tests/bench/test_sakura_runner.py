@@ -15,7 +15,10 @@ def _make_synthetic_workload() -> Workload:
 
     def make_loader():
         torch.manual_seed(0)
-        return [(torch.randn(4, 4), torch.randint(0, 2, (4,))) for _ in range(2)]
+        ds = torch.utils.data.TensorDataset(
+            torch.randn(8, 4), torch.randint(0, 2, (8,))
+        )
+        return torch.utils.data.DataLoader(ds, batch_size=4, shuffle=False)
 
     def eval_fn(model, loader):
         return {"val_acc": 0.5}  # constant; suffices for smoke
@@ -43,3 +46,22 @@ def test_sakura_runner_telemetry_observes_events():
     assert len(sink) >= 7
     assert any(r["event"] == "OnTrainBegin" for r in sink)
     assert any(r["event"] == "OnEpochEnd" for r in sink)
+
+
+def test_sakura_runner_lightning_telemetry_observes_events():
+    """SakuraRunner with framework='lightning' installs LightningAdapter and observes events."""
+    pytest.importorskip("lightning")
+    sink: list[dict] = []
+    runner = SakuraRunner(framework="lightning", services=[Telemetry(output=sink.append)])
+    report = runner.run(_make_synthetic_workload())
+
+    assert report.workload == "sakura-runner-smoke"
+    assert report.framework == "lightning"
+    assert "telemetry" in report.sakura_services
+    # Lightning adapter emits OnTrainBegin, OnEpochBegin, OnTrainStepBegin per batch,
+    # OnBeforeOptimizerStep per batch, OnEpochEnd, OnTrainEnd. At minimum we see the
+    # epoch lifecycle.
+    assert len(sink) >= 4
+    assert any(r["event"] == "OnTrainBegin" for r in sink)
+    assert any(r["event"] == "OnEpochEnd" for r in sink)
+    assert any(r["event"] == "OnTrainEnd" for r in sink)

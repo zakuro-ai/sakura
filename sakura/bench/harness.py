@@ -169,17 +169,111 @@ class BaselineRunner:
         )
 
     def _run_lightning(self, workload: Workload) -> RunReport:
-        # Minimal lightning runner — Plan 4 framework adapters give us a path,
-        # but for the bench harness we need a self-contained loop. The simplest
-        # bridge: wrap the user's model in LightningModule on the fly.
-        raise NotImplementedError(
-            "Lightning baseline runner is Plan 5.x — for now use 'pytorch-ddp' "
-            "with a workload that returns plain torch.nn.Module."
-        )
+        """Wrap the workload's nn.Module in a LightningModule and call trainer.fit.
+
+        Works for any Workload whose make_model() returns a torch.nn.Module
+        and whose train_loader yields (x, y) tuples — the auto-wrapper uses
+        cross_entropy as the loss.
+        """
+        return self._run_lightning_impl(workload, adapter=None)
 
     def _run_hf(self, workload: Workload) -> RunReport:
+        """HuggingFace Trainer baseline.
+
+        Requires the workload's make_model() to return a transformers.PreTrainedModel
+        whose forward returns a ModelOutput with `.loss` (i.e., the model accepts
+        labels and computes loss internally). None of the current workloads
+        (mnist-mlp, cifar10-resnet50, distilbert-sst2-with-wrapper) satisfy this —
+        so this path raises with a clear message until an HF-shaped workload lands.
+        """
         raise NotImplementedError(
-            "HF baseline runner is Plan 5.x — for now use 'pytorch-ddp'."
+            "HF Trainer baseline requires workload.make_model() to return a "
+            "transformers.PreTrainedModel with a .forward(...) that returns "
+            "ModelOutput.loss. None of sakura's bundled workloads currently match "
+            "this contract. For HF-shaped models, build a Workload whose "
+            "make_model returns the raw transformers model (no wrapper) and "
+            "whose loaders yield dicts with 'labels' keys. For now, use "
+            "framework='pytorch-ddp' or 'lightning' for cross-framework "
+            "comparisons."
+        )
+
+    def _run_lightning_impl(self, workload: Workload, adapter=None) -> RunReport:
+        """Shared body of the Lightning baseline + sakura paths.
+
+        When `adapter` is None: pure baseline (no Sakura).
+        When `adapter` is a LightningAdapter: it's installed as a Trainer callback
+        so services on the adapter's runtime observe the lifecycle events.
+        """
+        import lightning as L
+        import torch
+
+        base_model = workload.make_model()
+        train_loader = workload.make_train_loader()
+        val_loader = workload.make_val_loader()
+
+        # Auto-wrap in a LightningModule. The wrapper assumes (x, y) batches
+        # + cross-entropy loss — same contract as _run_raw_pytorch.
+        class _AutoLM(L.LightningModule):
+            def __init__(self, m):
+                super().__init__()
+                self.model = m
+
+            def forward(self, x):
+                return self.model(x)
+
+            def training_step(self, batch, batch_idx):
+                x, y = batch
+                logits = self.model(x)
+                return torch.nn.functional.cross_entropy(logits, y)
+
+            def configure_optimizers(self):
+                return torch.optim.SGD(self.parameters(), lr=0.01)
+
+        lm = _AutoLM(base_model)
+
+        callbacks = [adapter] if adapter is not None else []
+        trainer = L.Trainer(
+            max_epochs=workload.epochs,
+            accelerator="auto",
+            devices=1,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            enable_checkpointing=False,
+            callbacks=callbacks,
+        )
+
+        t0 = time.perf_counter()
+        trainer.fit(lm, train_loader)
+        elapsed = time.perf_counter() - t0
+
+        # Approximate sample count (dataset size * epochs).
+        try:
+            n_samples = len(train_loader.dataset) * workload.epochs
+        except (AttributeError, TypeError):
+            n_samples = 0
+            for _ in train_loader:
+                n_samples += 1
+            n_samples *= workload.epochs
+
+        # Eval against the wrapped LightningModule's underlying model, since
+        # Lightning may have moved it to GPU.
+        eval_model = lm.model
+        eval_model.eval()
+        device = next(eval_model.parameters()).device
+        device_str = device.type if hasattr(device, "type") else str(device)
+        dev_val_loader = _DeviceLoader(val_loader, device_str)
+        final_metrics = workload.eval_fn(eval_model, dev_val_loader)
+
+        return RunReport(
+            workload=workload.name,
+            framework=self.framework,
+            elapsed_secs=elapsed,
+            samples_per_sec=n_samples / max(elapsed, 1e-9),
+            peak_gpu_mem_mb=self._peak_gpu_mem_mb(),
+            final_metrics=final_metrics,
+            git_sha=detect_git_sha(),
+            hardware=detect_hardware(),
         )
 
     @staticmethod
@@ -230,16 +324,34 @@ class SakuraRunner(BaselineRunner):
             rt.install(svc)
 
         # Run with the runtime active; the services observe via emitted events.
-        # For Plan 5, the bench harness uses raw pytorch + DDPAdapter for event emission.
         if self.framework == "pytorch-ddp":
             with rt:
                 report = self._run_raw_pytorch_with_adapter(workload, rt)
+        elif self.framework == "lightning":
+            with rt:
+                report = self._run_lightning_with_adapter(workload, rt)
+        elif self.framework == "hf-trainer":
+            # Defer to BaselineRunner._run_hf which raises a clear error.
+            raise NotImplementedError(
+                "SakuraRunner framework='hf-trainer' requires an HF-shaped Workload; "
+                "see BaselineRunner._run_hf for the contract. Use 'pytorch-ddp' or "
+                "'lightning' for now."
+            )
         else:
             raise NotImplementedError(
-                f"SakuraRunner framework={self.framework!r} not yet wired (Plan 5.x)"
+                f"SakuraRunner framework={self.framework!r} not yet wired"
             )
         report.sakura_services = [s.name for s in self._services]
         return report
+
+    def _run_lightning_with_adapter(self, workload: Workload, rt) -> RunReport:
+        """Sakura + Lightning: install LightningAdapter on the runtime + Trainer callback.
+
+        Reuses BaselineRunner._run_lightning_impl with adapter=LightningAdapter(rt).
+        """
+        from sakura.adapters.lightning import LightningAdapter
+        adapter = LightningAdapter(rt, rank=0, world_size=1)
+        return self._run_lightning_impl(workload, adapter=adapter)
 
     def _run_raw_pytorch_with_adapter(self, workload: Workload, rt) -> RunReport:
         import torch
