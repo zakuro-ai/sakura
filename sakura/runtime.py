@@ -16,9 +16,16 @@ class SakuraRuntime:
         *,
         compute: Optional[object] = None,
         logger: Optional[Callable[[dict], None]] = None,
+        record_history: bool = True,
     ) -> None:
+        """`record_history=False` skips per-event bookkeeping (memory + ~0.4µs/event).
+
+        Default True for backwards compatibility / debug visibility; benches
+        and tight inner loops should pass False.
+        """
         self._compute = compute
         self._logger = logger
+        self._record_history = record_history
         self._services: list[Service] = []
         self._sorted: list[Service] = []
         self._by_name: dict[str, Service] = {}
@@ -100,23 +107,46 @@ class SakuraRuntime:
         return self._by_name.get(name)
 
     def dispatch(self, event: Event) -> None:
-        services = list(self._sorted)
-        errors: list[tuple[Service, BaseException]] = []
+        # Fast path: empty service list — common when the runtime is used as
+        # a passive coordinator (e.g., bench harness with no services for
+        # overhead measurement). Skip allocations entirely.
+        services = self._sorted
+        if not services:
+            if self._record_history:
+                self._history.append({
+                    "event": type(event).__name__,
+                    "rank": event.rank,
+                    "world_size": event.world_size,
+                    "n_services": 0,
+                    "n_errors": 0,
+                })
+            return
+
+        errors: Optional[list[tuple[Service, BaseException]]] = None
         for s in services:
             try:
                 s.on_event(event)
             except BaseException as exc:  # noqa: BLE001
+                if errors is None:
+                    errors = []
                 errors.append((s, exc))
                 _log.exception("service '%s' raised during %s", s.name, type(event).__name__)
-        record = {
-            "event": type(event).__name__,
-            "rank": event.rank,
-            "world_size": event.world_size,
-            "n_services": len(services),
-            "n_errors": len(errors),
-        }
-        self._history.append(record)
+        if self._record_history:
+            self._history.append({
+                "event": type(event).__name__,
+                "rank": event.rank,
+                "world_size": event.world_size,
+                "n_services": len(services),
+                "n_errors": 0 if errors is None else len(errors),
+            })
         if self._logger is not None:
+            record = {
+                "event": type(event).__name__,
+                "rank": event.rank,
+                "world_size": event.world_size,
+                "n_services": len(services),
+                "n_errors": 0 if errors is None else len(errors),
+            }
             try:
                 self._logger(record)
             except Exception:

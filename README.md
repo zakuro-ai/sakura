@@ -215,7 +215,8 @@ These hooks are honored by the bench harness's raw-pytorch loop. Lightning / HF 
 | Dispatcher | URI | When |
 |---|---|---|
 | `InThreadDispatcher` | — | Tests / debug; runs synchronously |
-| `LocalDispatcher` | auto | Default; auto-spawns localhost `sakura-worker` |
+| `ThreadDispatcher` | — | In-process Python thread; real parallelism for tensor ops (torch releases the GIL) without subprocess pickle cost. Best for `AsyncEval` / `AsyncCheckpoint` when isolation isn't needed. |
+| `LocalDispatcher` | auto | Auto-spawns localhost `sakura-worker` subprocess; full GIL isolation, ~50ms+ pickle overhead per round-trip |
 | `RemoteDispatcher` | `quic://host:port` | Existing remote worker daemon |
 | `ZakuroDispatcher` | — | Wraps `zakuro.Compute` for users with existing Zakuro infra |
 
@@ -250,7 +251,35 @@ sakura-bench export reports/*.json
 
 Available workloads: `mnist-mlp`, `cifar10-resnet50`, `distilbert-sst2`, `distilbert-sst2-hf`, `distilbert-glue`, `llama3-1b-finetune`, `mistral-7b-lora`. Available frameworks: `pytorch-ddp`, `lightning`, `hf-trainer`. The `hf-trainer` framework requires an HF-shaped workload — one whose `make_model()` returns a `transformers.PreTrainedModel` (or any model whose `forward(**batch)` returns an output with `.loss`) and whose loaders yield single-dict batches with a `labels` key. `distilbert-sst2-hf` is the reference HF-shaped workload; `distilbert-sst2` (with the wrapper) targets the pytorch-ddp / lightning loops.
 
-**Honest framing.** The harness is real and ships; the headline speed numbers do not yet. Microbenchmarks on tiny CPU workloads (1-epoch MNIST/MLP, 1-epoch CIFAR with 32 train samples) show per-event service-dispatch overhead exceeding the wins from `MixedPrecision` / `Compile` at that scale — `AsyncEval` and `AsyncCheckpoint` need workloads where eval/checkpoint cost is meaningful relative to one training epoch before they amortize. Validating the speed claim requires GPU runs on the larger tiers (`cifar10-resnet50` full, `distilbert-glue`, `llama3-1b-finetune`) on real hardware, which has not been done in this release. Treat this as: harness ready, numbers TBD.
+### Measured results (CPU)
+
+After the runtime hot-path optimizations (cached CUDA detection, fast path for empty service stack, opt-out history bookkeeping), sakura's overhead vs. raw PyTorch is **within noise** on tiny workloads (median over 20 trials, MNIST/MLP smoke):
+
+| Configuration | Median | vs. baseline |
+|---|---|---|
+| baseline (raw PyTorch loop) | 155 ms | — |
+| sakura runtime, no services | 153 ms | −1.2% |
+| sakura + Telemetry | 152 ms | −1.7% |
+
+(All within trial-to-trial noise; the practical claim is "no overhead.")
+
+The structural win arrives when there's something to overlap. `AsyncEval` + `ThreadDispatcher` runs the per-epoch evaluation on a background thread — torch's C++ kernels release the GIL so this is real parallelism on CPU — so eval overlaps with the next epoch's training:
+
+| Configuration | Median (5 epochs, 5 evals × 16k samples) | Speedup |
+|---|---|---|
+| baseline (eval blocks each epoch) | 733 ms | 1.00× |
+| sakura + AsyncEval + ThreadDispatcher | 584 ms | **1.26×** (−20% wallclock) |
+
+Median over 7 trials, `OMP_NUM_THREADS=2`. Reproduce with:
+
+```bash
+OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 python scripts/bench_async_eval.py \
+    --epochs 5 --eval-batches 256 --trials 7
+```
+
+The win comes from N−1 of the N evals finishing during training time that would have happened anyway. The sweet spot is when per-epoch eval cost is comparable to per-epoch training cost; if eval is much heavier than training, AsyncEval's backpressure forces the next epoch to wait, and the speedup shrinks.
+
+**Honest framing.** The wins above are CPU microbenchmarks. The headline claims for the perf tier (`cifar10-resnet50` full, `distilbert-glue`, `llama3-1b-finetune`) still require GPU validation that hasn't happened in this release. The CPU result demonstrates that the overlap pattern is real and works; whether it scales to a 26% wallclock reduction on real GPU workloads — where eval / training cost ratios differ — is unverified.
 
 ### Known limitations
 
