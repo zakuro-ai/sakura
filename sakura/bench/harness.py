@@ -80,6 +80,35 @@ def detect_git_sha() -> str:
         return ""
 
 
+class _DeviceLoader:
+    """Wraps any iterable of batches and moves tensors to `device` on the fly.
+
+    Used by runners so that `eval_fn` always receives device-local batches,
+    even when a Workload builds plain lists of CPU tensors.
+    """
+
+    def __init__(self, loader, device: str):
+        self._loader = loader
+        self._device = device
+
+    def __iter__(self):
+        for batch in self._loader:
+            yield _move_batch(batch, self._device)
+
+    def __len__(self):
+        return len(self._loader)
+
+
+def _move_batch(batch, device: str):
+    """Recursively move tensors in a batch (tuple/list/tensor) to `device`."""
+    if hasattr(batch, "to"):
+        return batch.to(device)
+    if isinstance(batch, (tuple, list)):
+        moved = [_move_batch(b, device) for b in batch]
+        return type(batch)(moved)
+    return batch
+
+
 class BaselineRunner:
     """Run a Workload with a vanilla framework (no Sakura services)."""
 
@@ -121,7 +150,10 @@ class BaselineRunner:
         elapsed = time.perf_counter() - t0
 
         model.eval()
-        final_metrics = workload.eval_fn(model, val_loader)
+        # Wrap val_loader so eval_fn receives device-placed batches even when
+        # the workload builds plain lists of CPU tensors.
+        dev_val_loader = _DeviceLoader(val_loader, device)
+        final_metrics = workload.eval_fn(model, dev_val_loader)
 
         return RunReport(
             workload=workload.name,
@@ -237,7 +269,8 @@ class SakuraRunner(BaselineRunner):
                 opt.step()
                 n_samples += y.size(0) if hasattr(y, "size") else len(y)
             model.eval()
-            metrics = workload.eval_fn(model, val_loader)
+            dev_val_loader = _DeviceLoader(val_loader, device)
+            metrics = workload.eval_fn(model, dev_val_loader)
             adapter.on_epoch_end(epoch, model, opt, metrics=metrics)
 
         elapsed = time.perf_counter() - t0
