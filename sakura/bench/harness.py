@@ -100,9 +100,11 @@ class _DeviceLoader:
 
 
 def _move_batch(batch, device: str):
-    """Recursively move tensors in a batch (tuple/list/tensor) to `device`."""
+    """Recursively move tensors in a batch (tuple/list/dict/tensor) to `device`."""
     if hasattr(batch, "to"):
         return batch.to(device)
+    if isinstance(batch, dict):
+        return {k: _move_batch(v, device) for k, v in batch.items()}
     if isinstance(batch, (tuple, list)):
         moved = [_move_batch(b, device) for b in batch]
         return type(batch)(moved)
@@ -189,7 +191,9 @@ class BaselineRunner:
     def _batch_to_device(batch, device):
         if isinstance(batch, (tuple, list)) and len(batch) == 2:
             x, y = batch
-            return x.to(device) if hasattr(x, "to") else x, y.to(device) if hasattr(y, "to") else y
+            x = _move_batch(x, device)
+            y = y.to(device) if hasattr(y, "to") else y
+            return x, y
         return batch
 
     @staticmethod
