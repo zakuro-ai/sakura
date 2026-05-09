@@ -1,5 +1,9 @@
 name: publish
 
+# Maturin wheel matrix → PyPI for v1.0+ releases.
+# Auth: PyPI API token, stored as PYPI_API_TOKEN in the `release` environment.
+# Same auth pattern as the v0.1.x auto-release.yml — kept for continuity.
+
 on:
   workflow_dispatch:
   push:
@@ -68,16 +72,27 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [wheels, sdist]
     runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write
+    environment: release
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - name: Publish to PyPI
-        uses: PyO3/maturin-action@v1
+      - name: Show artifacts to upload
+        run: ls -la dist/
+      - uses: actions/setup-python@v5
         with:
-          command: upload
-          args: --non-interactive --skip-existing dist/*
+          python-version: "3.12"
+      - name: Publish to PyPI (API token via twine)
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TWINE_PASSWORD:-}" ]; then
+            echo "::error::PYPI_API_TOKEN secret is not set on the 'release' environment."
+            echo "::error::Configure it at https://github.com/zakuro-ai/sakura/settings/environments → release → Add secret."
+            exit 1
+          fi
+          python3 -m pip install --user --quiet twine
+          python3 -m twine upload --non-interactive --skip-existing dist/*
