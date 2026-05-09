@@ -46,21 +46,12 @@ bench = ["sakura-ml[huggingface]"]
 dev = ["pytest", "maturin>=1.4"]
 
 [project.scripts]
-sakura = "sakura.__main__:main"
-sakura-benchmark = "main:main"
 sakura-worker = "sakura.worker.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.maturin]
-# python-source is omitted — sakura_wire is a pure Rust extension (no Python wrapper layer).
-# maturin will produce the .so directly as the module.
 manifest-path = "crates/sakura-wire/Cargo.toml"
 module-name = "sakura_wire"
 features = ["pyo3/extension-module"]
-include = [
-    { path = "sakura/config.yaml", format = "sdist" },
-    { path = "sakura/config.yaml", format = "wheel" },
-    { path = "main.py", format = "wheel" },
-]
