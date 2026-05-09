@@ -12,7 +12,9 @@ new SakuraRuntime + Adapter + Service surface.
 __version__ = "1.0.0a0"
 __build__ = "2026-05-08T00:00:00Z"
 
+from sakura.adapters import Adapter, DDPAdapter, HFAdapter, LightningAdapter
 from sakura.dispatch import Compute, Dispatcher, Future, Result
+from sakura.dispatch.zakuro import ZakuroDispatcher
 from sakura.events import (
     Event,
     OnEpochBegin,
@@ -38,14 +40,18 @@ from sakura.services import (
 
 __all__ = [
     "ActivationCheckpoint",
+    "Adapter",
     "AsyncCheckpoint",
     "AsyncEval",
     "BaseService",
     "Compile",
     "Compute",
+    "DDPAdapter",
     "Dispatcher",
     "Event",
     "Future",
+    "HFAdapter",
+    "LightningAdapter",
     "MixedPrecision",
     "OnEpochBegin",
     "OnEpochEnd",
@@ -59,6 +65,7 @@ __all__ = [
     "SakuraRuntime",
     "Service",
     "Telemetry",
+    "ZakuroDispatcher",
     "ZeRO1",
     "__build__",
     "__version__",
