@@ -11,10 +11,10 @@ repository = "https://github.com/zakuro-ai/sakura"
 [workspace.dependencies]
 pyo3 = { version = "0.21", features = ["extension-module", "abi3-py310"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "io-util", "process"] }
-quinn = "0.10"
-rustls = { version = "0.21", default-features = false, features = ["tls12"] }
-rustls-pemfile = "1.0"
-rcgen = "0.12"
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+rustls-pki-types = "1"
+rcgen = "0.13"
 postcard = { version = "1.0", default-features = false, features = ["alloc", "use-std"] }
 serde = { version = "1.0", features = ["derive"] }
 bytes = "1.5"

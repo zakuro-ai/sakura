@@ -15,7 +15,7 @@ pyo3 = { workspace = true }
 tokio = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
+rustls-pki-types = { workspace = true }
 rcgen = { workspace = true }
 postcard = { workspace = true }
 serde = { workspace = true }

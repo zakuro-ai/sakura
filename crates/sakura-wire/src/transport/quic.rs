@@ -1,7 +1,9 @@
-//! QUIC transport via quinn. Self-signed TLS for loopback by default.
+//! QUIC transport via quinn 0.11 + rustls 0.23. Self-signed TLS for loopback by default.
 
+use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::{Connection, Endpoint, ServerConfig, TransportConfig};
 use rcgen::generate_simple_self_signed;
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -73,16 +75,27 @@ pub struct SelfSignedPair {
 pub fn generate_self_signed(subject: &str) -> Result<SelfSignedPair, TransportError> {
     let cert = generate_simple_self_signed(vec![subject.into()])?;
     Ok(SelfSignedPair {
-        cert_der: cert.serialize_der()?,
-        key_der: cert.serialize_private_key_der(),
+        cert_der: cert.cert.der().to_vec(),
+        key_der: cert.key_pair.serialize_der(),
     })
 }
 
 fn server_config(pair: &SelfSignedPair) -> Result<ServerConfig, TransportError> {
-    let cert_chain = vec![rustls::Certificate(pair.cert_der.clone())];
-    let key = rustls::PrivateKey(pair.key_der.clone());
-    let mut cfg = ServerConfig::with_single_cert(cert_chain, key)
+    // rustls 0.23: install a default crypto provider once per process.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let cert_chain = vec![CertificateDer::from(pair.cert_der.clone())];
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(pair.key_der.clone()));
+
+    let crypto = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain, key)
         .map_err(|e| TransportError::Rustls(e.to_string()))?;
+
+    let quic_crypto =
+        QuicServerConfig::try_from(crypto).map_err(|e| TransportError::Rustls(e.to_string()))?;
+
+    let mut cfg = ServerConfig::with_crypto(Arc::new(quic_crypto));
     let mut transport = TransportConfig::default();
     transport.max_concurrent_uni_streams(0u8.into());
     cfg.transport = Arc::new(transport);
@@ -90,13 +103,21 @@ fn server_config(pair: &SelfSignedPair) -> Result<ServerConfig, TransportError> 
 }
 
 fn client_config(trusted_cert: &[u8]) -> Result<quinn::ClientConfig, TransportError> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let mut roots = rustls::RootCertStore::empty();
-    roots.add(&rustls::Certificate(trusted_cert.to_vec()))?;
+    roots
+        .add(CertificateDer::from(trusted_cert.to_vec()))
+        .map_err(|e| TransportError::Rustls(e.to_string()))?;
+
     let crypto = rustls::ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(roots)
         .with_no_client_auth();
-    let mut cfg = quinn::ClientConfig::new(Arc::new(crypto));
+
+    let quic_crypto =
+        QuicClientConfig::try_from(crypto).map_err(|e| TransportError::Rustls(e.to_string()))?;
+
+    let mut cfg = quinn::ClientConfig::new(Arc::new(quic_crypto));
     let mut transport = TransportConfig::default();
     transport.max_concurrent_uni_streams(0u8.into());
     cfg.transport_config(Arc::new(transport));
@@ -127,6 +148,11 @@ pub async fn connect(
 
 /// Open a bidirectional stream, write the request bytes, signal end-of-write,
 /// then read the entire response and return it.
+///
+/// quinn 0.11: `SendStream::finish()` is now sync (returns `Result<(), ClosedStream>`)
+/// — closes the write side immediately. We then await `stopped()` to wait for the
+/// peer to ack — but for our request/response shape, we just rely on `read_to_end`
+/// on the recv side to drive completion.
 pub async fn rpc_call(
     conn: &Connection,
     request_bytes: Vec<u8>,
@@ -134,7 +160,6 @@ pub async fn rpc_call(
     let (mut send, mut recv) = conn.open_bi().await?;
     send.write_all(&request_bytes).await?;
     send.finish()
-        .await
         .map_err(|e| TransportError::Write(e.to_string()))?;
     let resp = recv
         .read_to_end(64 * 1024 * 1024 * 1024)
@@ -159,13 +184,18 @@ pub async fn accept_request(
 }
 
 /// Server side: write a response and finish the stream.
+///
+/// quinn 0.11: `finish()` is sync (just closes the local write side); we then
+/// await `stopped()` so the spawned task doesn't drop the connection before
+/// the peer has acked the data — otherwise the client sees "connection lost"
+/// mid-read.
 pub async fn send_response(
     mut send: quinn::SendStream,
     bytes: Vec<u8>,
 ) -> Result<(), TransportError> {
     send.write_all(&bytes).await?;
     send.finish()
-        .await
         .map_err(|e| TransportError::Write(e.to_string()))?;
+    let _ = send.stopped().await;
     Ok(())
 }
