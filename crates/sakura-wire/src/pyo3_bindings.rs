@@ -502,6 +502,192 @@ pub fn run_echo_server(py: Python<'_>, addr: String, print_handshake: bool) -> P
     })
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Task 9: run_server — dispatches every RPC to a Python callback
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Bind a QUIC server, print one handshake line on stdout (if requested),
+/// then dispatch every RPC to the Python `callback` until shutdown.
+///
+/// `callback` is invoked with three positional args:
+///   - handler_id: int
+///   - tensors: list[dict]   (each dict = {"shape": list[int], "dtype_id": int,
+///                            "device_id": int, "data": bytes})
+///   - aux_payload: bytes
+/// and must return a 2-tuple `(result_tensors, result_aux_bytes)` of the same shape.
+///
+/// Plan 2's HandlerRegistry on the Python side is the canonical implementation;
+/// run_server is the thin Rust shim.
+#[pyfunction]
+#[pyo3(signature = (addr, callback, print_handshake = true))]
+pub fn run_server(
+    py: Python<'_>,
+    addr: String,
+    callback: PyObject,
+    print_handshake: bool,
+) -> PyResult<()> {
+    let cb = std::sync::Arc::new(callback);
+    py.allow_threads(|| -> PyResult<()> {
+        WireRuntime::shared().block_on(async move {
+            let pair = generate_self_signed("localhost")
+                .map_err(|e| PyRuntimeError::new_err(format!("cert: {e}")))?;
+            let bind_addr: SocketAddr = addr
+                .parse()
+                .map_err(|e| PyRuntimeError::new_err(format!("addr {addr}: {e}")))?;
+            let endpoint = bind_server(bind_addr, &pair)
+                .map_err(|e| PyRuntimeError::new_err(format!("bind: {e}")))?;
+            let local = endpoint
+                .local_addr()
+                .map_err(|e| PyRuntimeError::new_err(format!("local_addr: {e}")))?;
+            if print_handshake {
+                let cert_hex = encode_hex(&pair.cert_der);
+                println!("SAKURA_WORKER_LISTENING quic://{local} {cert_hex}");
+                let _ = std::io::Write::flush(&mut std::io::stdout().lock());
+            }
+
+            while let Some(incoming) = endpoint.accept().await {
+                let cb = std::sync::Arc::clone(&cb);
+                tokio::spawn(async move {
+                    match incoming.await {
+                        Ok(conn) => loop {
+                            let cb = std::sync::Arc::clone(&cb);
+                            match accept_request(&conn).await {
+                                Ok((send, req)) => {
+                                    let resp = match dispatch_via_callback(&cb, &req) {
+                                        Ok(b) => b,
+                                        Err(e) => {
+                                            tracing::error!("dispatch: {e:?}");
+                                            return;
+                                        }
+                                    };
+                                    if let Err(e) = send_response(send, resp).await {
+                                        tracing::error!("send_response: {e:?}");
+                                        return;
+                                    }
+                                }
+                                Err(_) => return,
+                            }
+                        },
+                        Err(e) => tracing::error!("connection: {e:?}"),
+                    }
+                });
+            }
+            Ok(())
+        })
+    })
+}
+
+/// Decode an RPC request, invoke the Python callback under the GIL, and
+/// re-encode its response.
+fn dispatch_via_callback(callback: &PyObject, req_bytes: &[u8]) -> Result<Vec<u8>, PyWireError> {
+    use crate::codec::{unpack_request, RpcResponseHeader, RpcStatus, TensorDesc, WireVersion};
+    let (header, descs, tensors, aux) = unpack_request(req_bytes).map_err(|e| {
+        PyWireError::Wire(WireError::DecodeFailed {
+            what: "server unpack".into(),
+            detail: e.to_string(),
+        })
+    })?;
+
+    let (out_tensors_descs, out_tensors_bytes, out_aux): (Vec<TensorDesc>, Vec<Vec<u8>>, Vec<u8>) =
+        Python::with_gil(|py| -> PyResult<_> {
+            // Build the tensors list as Python list[dict].
+            let py_tensors = PyList::empty_bound(py);
+            for (desc, bytes) in descs.iter().zip(tensors.iter()) {
+                let d = PyDict::new_bound(py);
+                d.set_item("shape", desc.shape.iter().copied().collect::<Vec<u32>>())?;
+                d.set_item("dtype_id", desc.dtype as u8)?;
+                d.set_item(
+                    "device_id",
+                    match desc.device_hint {
+                        crate::codec::Device::Cpu => 0u8,
+                        crate::codec::Device::Cuda(i) => i + 1,
+                    },
+                )?;
+                d.set_item("data", PyBytes::new_bound(py, bytes))?;
+                py_tensors.append(d)?;
+            }
+            let py_aux = PyBytes::new_bound(py, &aux);
+            let result = callback.call1(py, (header.handler_id, py_tensors, py_aux))?;
+            // Result is expected to be (list[dict], bytes).
+            let tup: (Vec<TensorTuple>, Vec<u8>) = result.extract(py)?;
+            let out_descs: Vec<TensorDesc> = tup
+                .0
+                .iter()
+                .map(|t| {
+                    use crate::codec::{Device, Dtype};
+                    let dtype = match t.dtype_id {
+                        0 => Dtype::F32,
+                        1 => Dtype::F16,
+                        2 => Dtype::BF16,
+                        3 => Dtype::F8E4M3,
+                        10 => Dtype::I64,
+                        11 => Dtype::I32,
+                        12 => Dtype::U8,
+                        13 => Dtype::Bool,
+                        _ => Dtype::U8,
+                    };
+                    let device = match t.device_id {
+                        0 => Device::Cpu,
+                        other => Device::Cuda(other - 1),
+                    };
+                    TensorDesc {
+                        shape: t.shape.clone().into(),
+                        dtype,
+                        n_bytes: t.data.len() as u64,
+                        device_hint: device,
+                        fp16_cast_on_wire: false,
+                    }
+                })
+                .collect();
+            let bytes: Vec<Vec<u8>> = tup.0.into_iter().map(|t| t.data).collect();
+            Ok((out_descs, bytes, tup.1))
+        })
+        .map_err(|e: PyErr| {
+            PyWireError::Wire(WireError::HandlerPanic {
+                msg: e.to_string(),
+                trace: vec![],
+            })
+        })?;
+
+    // Encode the response.
+    let resp_header = RpcResponseHeader {
+        version: WireVersion::V1,
+        request_id: header.request_id,
+        status: RpcStatus::Ok,
+        n_result_tensors: out_tensors_descs.len() as u32,
+        aux_payload_bytes: out_aux.len() as u32,
+        elapsed_us: 0,
+    };
+    let header_bytes = postcard::to_allocvec(&resp_header).map_err(|e| {
+        PyWireError::Wire(WireError::DecodeFailed {
+            what: "encode resp header".into(),
+            detail: e.to_string(),
+        })
+    })?;
+    let descs_bytes = postcard::to_allocvec(&out_tensors_descs).map_err(|e| {
+        PyWireError::Wire(WireError::DecodeFailed {
+            what: "encode resp descs".into(),
+            detail: e.to_string(),
+        })
+    })?;
+    let total = 4
+        + header_bytes.len()
+        + 4
+        + descs_bytes.len()
+        + out_tensors_bytes.iter().map(Vec::len).sum::<usize>()
+        + out_aux.len();
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
+    out.extend_from_slice(&header_bytes);
+    out.extend_from_slice(&(descs_bytes.len() as u32).to_le_bytes());
+    out.extend_from_slice(&descs_bytes);
+    for t in &out_tensors_bytes {
+        out.extend_from_slice(t);
+    }
+    out.extend_from_slice(&out_aux);
+    Ok(out)
+}
+
 fn echo_handler(req_bytes: &[u8]) -> Result<Vec<u8>, PyWireError> {
     use crate::codec::{unpack_request, RpcResponseHeader, RpcStatus, WireVersion};
     let (header, descs, tensors, aux) = unpack_request(req_bytes).map_err(|e| {

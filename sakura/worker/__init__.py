@@ -1,9 +1,15 @@
 """sakura.worker — daemon entry point used by the WorkerSupervisor.
 
-In Plan 1 the worker only registers an echo handler (HANDLER_ECHO = 0xDEAD)
-which bounces all input tensors back unchanged. Plan 2 adds the real
-HANDLER_EXEC_CLOUDPICKLED handler that runs user-supplied callables.
+Plan 2 uses a full handler registry (echo + heartbeat + exec_cloudpickled).
+Plan 1's echo-only mode is still available via `sakura-worker --echo-only`.
 """
-__all__ = ["main"]
+from sakura.worker.handlers import default_registry
+from sakura.worker.registry import HandlerRegistry
 
-from sakura.worker.__main__ import main
+__all__ = ["HandlerRegistry", "default_registry", "main"]
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Re-exported `main` so existing entry-points keep resolving cleanly."""
+    from sakura.worker.__main__ import main as _main
+    return _main(argv)

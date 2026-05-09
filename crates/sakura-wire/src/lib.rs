@@ -21,5 +21,6 @@ fn sakura_wire(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<pyo3_bindings::PyTlsConfig>()?;
     m.add_class::<pyo3_bindings::PyWorkerSupervisor>()?;
     m.add_function(wrap_pyfunction!(pyo3_bindings::run_echo_server, m)?)?;
+    m.add_function(wrap_pyfunction!(pyo3_bindings::run_server, m)?)?;
     Ok(())
 }
