@@ -44,8 +44,12 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install build deps
-        run: pip install --upgrade pip maturin pytest
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip maturin pytest
       - name: Build + install via maturin develop
-        run: maturin develop --release
+        run: |
+          source .venv/bin/activate
+          maturin develop --release
       - name: Pytest (wire layer only — Plan 1)
-        run: pytest tests/wire/ -v
+        run: .venv/bin/pytest tests/wire/ -v
