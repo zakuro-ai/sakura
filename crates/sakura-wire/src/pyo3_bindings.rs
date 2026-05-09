@@ -85,18 +85,22 @@ pub struct PyRpcResult {
 impl PyRpcResult {
     #[getter]
     fn aux<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new_bound(py, &self.aux)
+        PyBytes::new(py, &self.aux)
     }
 
     /// Returns a list of `bytes` objects (one per tensor). Plan 1: bytes-for-bytes
     /// fidelity is what callers need; Plan 2 layers numpy/torch unpacking on top.
-    fn tensors<'py>(&self, py: Python<'py>) -> Bound<'py, PyList> {
+    ///
+    /// pyo3 0.24: `PyList::new` is fallible (allocation can fail under memory
+    /// pressure). We propagate via PyResult so the binding raises Python-side
+    /// instead of panicking.
+    fn tensors<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         let items: Vec<Bound<PyBytes>> = self
             .tensors
             .iter()
-            .map(|t| PyBytes::new_bound(py, &t.bytes))
+            .map(|t| PyBytes::new(py, &t.bytes))
             .collect();
-        PyList::new_bound(py, items)
+        PyList::new(py, items)
     }
 }
 
@@ -426,7 +430,7 @@ impl PyWorkerSupervisor {
         let uri = handle.uri.clone();
         let cert = handle.cert_der.clone();
         self.handles.lock().unwrap().push(Arc::new(handle));
-        let cert_py = PyBytes::new_bound(py, &cert).unbind();
+        let cert_py = PyBytes::new(py, &cert).unbind();
         Ok((uri, cert_py))
     }
 
@@ -591,9 +595,9 @@ fn dispatch_via_callback(callback: &PyObject, req_bytes: &[u8]) -> Result<Vec<u8
     let (out_tensors_descs, out_tensors_bytes, out_aux): (Vec<TensorDesc>, Vec<Vec<u8>>, Vec<u8>) =
         Python::with_gil(|py| -> PyResult<_> {
             // Build the tensors list as Python list[dict].
-            let py_tensors = PyList::empty_bound(py);
+            let py_tensors = PyList::empty(py);
             for (desc, bytes) in descs.iter().zip(tensors.iter()) {
-                let d = PyDict::new_bound(py);
+                let d = PyDict::new(py);
                 d.set_item("shape", desc.shape.iter().copied().collect::<Vec<u32>>())?;
                 d.set_item("dtype_id", desc.dtype as u8)?;
                 d.set_item(
@@ -603,10 +607,10 @@ fn dispatch_via_callback(callback: &PyObject, req_bytes: &[u8]) -> Result<Vec<u8
                         crate::codec::Device::Cuda(i) => i + 1,
                     },
                 )?;
-                d.set_item("data", PyBytes::new_bound(py, bytes))?;
+                d.set_item("data", PyBytes::new(py, bytes))?;
                 py_tensors.append(d)?;
             }
-            let py_aux = PyBytes::new_bound(py, &aux);
+            let py_aux = PyBytes::new(py, &aux);
             let result = callback.call1(py, (header.handler_id, py_tensors, py_aux))?;
             // Result is expected to be (list[dict], bytes).
             let tup: (Vec<TensorTuple>, Vec<u8>) = result.extract(py)?;
