@@ -38,6 +38,23 @@ def test_cifar10_workload_runs_one_epoch():
     assert "val_acc" in report.final_metrics
 
 
+def test_cifar10_imagenet_shape_workload_builds():
+    """ResNet-50 + CIFAR-10 with 224×224 inputs builds and exposes the right
+    shape. Skipped on environments without enough RAM to materialize the
+    upscaled images (the synthetic-data fallback is small but
+    network-dependent loaders may swap in heavier datasets)."""
+    from sakura.bench.workloads.cifar import make_workload_imagenet_shape
+
+    wl = make_workload_imagenet_shape(batch_size=8, epochs=1, n_train=8, n_val=8)
+    assert wl.name == "cifar10-resnet50-imagenet"
+    assert wl.tier == "perf"
+    # Probe one batch: shape must be (B, 3, 224, 224).
+    loader = wl.make_train_loader()
+    batch = next(iter(loader))
+    x, _ = batch
+    assert x.shape[1:] == (3, 224, 224)
+
+
 def test_distilbert_workload_runs_one_epoch():
     """Build DistilBERT + SST-2 workload, run 1 epoch via BaselineRunner.
     Tiny subset (64 train, 32 val) to keep CPU smoke under 90s."""
