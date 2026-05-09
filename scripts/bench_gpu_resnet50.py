@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
+from typing import Optional
 
 
 @dataclass
@@ -32,6 +33,7 @@ class Result:
     peak_gpu_mem_mb: float
     val_loss: float
     val_acc: float
+    final_scale: Optional[float] = None  # GradScaler's final scale; None for non-fp16
 
 
 # --------------------------------------------------------- subprocess entry
@@ -53,6 +55,11 @@ def _run_one(config: str, epochs: int, batch_size: int, n_train: int, n_val: int
         if "bf16" in config:
             from sakura.services.mixed_precision import MixedPrecision
             services.append(MixedPrecision(dtype="bf16"))
+        elif "fp16" in config:
+            from sakura.services.mixed_precision import MixedPrecision
+            # fp16 needs a GradScaler (CUDA-only); the runtime hooks
+            # (scale_loss + optimizer_step) drive scaler.scale / .step / .update.
+            services.append(MixedPrecision(dtype="fp16"))
         if "compile" in config:
             from sakura.services.compile import Compile
             services.append(Compile(mode="default"))
@@ -86,6 +93,18 @@ def _run_one(config: str, epochs: int, batch_size: int, n_train: int, n_val: int
         runner = SakuraRunner(framework="pytorch-ddp", services=services)
 
     report = runner.run(wl)
+    # If MixedPrecision is installed, surface the GradScaler's final scale
+    # factor — confirms scaler.update actually ran and adjusted dynamically.
+    final_scale = None
+    for svc in services:
+        if getattr(svc, "name", "") == "mixed_precision":
+            scaler = getattr(svc, "_scaler", None)
+            if scaler is not None:
+                try:
+                    final_scale = float(scaler.get_scale())
+                except Exception:
+                    pass
+            break
     print(json.dumps({
         "config": config,
         "elapsed_secs": report.elapsed_secs,
@@ -93,6 +112,7 @@ def _run_one(config: str, epochs: int, batch_size: int, n_train: int, n_val: int
         "peak_gpu_mem_mb": report.peak_gpu_mem_mb,
         "val_loss": float(report.final_metrics.get("val_loss", float("nan"))),
         "val_acc": float(report.final_metrics.get("val_acc", float("nan"))),
+        "final_scale": final_scale,
     }))
     return None
 
@@ -163,11 +183,12 @@ def main() -> int:
             r = _spawn_one(cfg, args, repo_root)
             wall = time.perf_counter() - t0
             trials_data.append(r)
+            scale_str = f"  scale={r.final_scale:.0f}" if r.final_scale is not None else ""
             print(f"  {cfg:35s}  trial {trial+1}/{args.trials}: "
                   f"{r.elapsed_secs*1000:7.0f}ms  "
                   f"{r.samples_per_sec:7.0f} samples/s  "
                   f"{r.peak_gpu_mem_mb:6.0f}MB  "
-                  f"val_loss={r.val_loss:.3f}  val_acc={r.val_acc:.3f}  "
+                  f"val_loss={r.val_loss:.3f}  val_acc={r.val_acc:.3f}{scale_str}  "
                   f"(wall {wall:.0f}s)")
         # Median by elapsed_secs.
         trials_data.sort(key=lambda r: r.elapsed_secs)

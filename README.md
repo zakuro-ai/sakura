@@ -303,6 +303,9 @@ bf16 mixed precision is the headline GPU win — Ada Lovelace tensor cores are r
 |---|---|---|---|---|
 | baseline (fp32) | 23.55s | 522 | 10714 MB | 1.00× |
 | `--service mixed_precision:bf16` | 17.85s | 689 | 5641 MB | **1.32×** (47% memory cut) |
+| `--service mixed_precision:fp16` | 17.87s | 688 | 5641 MB | **1.32×** (GradScaler stable, dynamic scale 65536 → 8192) |
+
+The `fp16` row exercises sakura's runtime-coordinated GradScaler integration end-to-end: `wrap_loss(loss)` calls `scaler.scale`, `optimizer_step(opt)` returns True so the loop skips its default `opt.step()` and the scaler drives `scaler.step` + `scaler.update` instead. The scale factor adjusts from the canonical fp16 init `2^16 = 65536` down to a stable `8192` during training — confirming the dynamic-scaling math runs (the inf/nan check + scale adjustment that the previous "unscale-only" integration was missing). val_loss tracks bf16 within ~0.5; no NaN explosion.
 
 **DistilBERT / SST-2** — HF Trainer path, 2 epochs, batch 64, 4096 train, max_length 128:
 
@@ -323,7 +326,7 @@ The DistilBERT result also confirms sakura's HF integration cost is **zero**: in
 
 ### Known limitations
 
-- **`MixedPrecision` fp16 in non-DDP framework loops.** Lightning's automatic-optimization and HF Trainer own `opt.step()` themselves and don't expose an interception point — for those frameworks, configure precision via `L.Trainer(precision="16-mixed")` or HF's `TrainingArguments(fp16=True)` instead of installing this service. The runtime-coordinated step replacement (`runtime.scale_loss(loss)` + `runtime.optimizer_step(opt)`) is honored by sakura's raw-DDP loop, where the full fp16 path (scale → backward → unscale → grad-clip → scaler.step → scaler.update with inf/nan check + dynamic scale update) runs end-to-end.
+- **`MixedPrecision` fp16 in non-DDP framework loops.** Lightning's automatic-optimization and HF Trainer own `opt.step()` themselves and don't expose an interception point — for those frameworks, configure precision via `L.Trainer(precision="16-mixed")` or HF's `TrainingArguments(fp16=True)` instead of installing this service. The runtime-coordinated step replacement (`runtime.scale_loss(loss)` + `runtime.optimizer_step(opt)`) is honored by sakura's raw-DDP loop, where the full fp16 path (scale → backward → unscale → grad-clip → scaler.step → scaler.update) runs end-to-end. Validated end-to-end on RTX 4090: dynamic scale converges, no NaN explosion, wallclock matches bf16 within 0.1% (see "Measured results (GPU)" above).
 - **`ZeRO1` multi-rank** uses cyclic dealing (param `i` owned by rank `i % world_size`) and per-shard `opt.step()` followed by parameter broadcast. Verified bit-equivalent to a single-rank `opt.step()` over 1- and 5-step SGD trajectories under `gloo` (see `tests/zero/test_sharded_optimizer_multi_rank.py`); NCCL multi-rank is not yet exercised in CI.
 - **`Compile` on CPU.** `torch.compile` is GPU-optimized (Inductor's biggest wins are kernel fusion + cudagraphs). On the CPU smoke workloads in `sakura-bench`, installing `--service compile` is at-best neutral (within trial noise) and often a small regression because the JIT/cache-warmup cost outweighs the inner-loop savings. Recommend `--service compile` for GPU runs only; on CPU, leave it off.
 - The cross-framework speed comparison vs. raw HuggingFace Trainer / Lightning *without* sakura is wired (`BaselineRunner` covers `pytorch-ddp`, `lightning`, and `hf-trainer`); the HF `hf+bf16+sakura` GPU row above is the first populated entry. ResNet-50 + CIFAR-10 in the perf tier shipped here; `distilbert-glue` (multi-task GLUE) and `llama3-1b-finetune` are still stubs.
