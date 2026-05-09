@@ -37,10 +37,12 @@ from sakura.services import (
     Telemetry,
     ZeRO1,
 )
+from sakura.zero import ShardedOptimizer
 
 __all__ = [
     "ActivationCheckpoint",
     "Adapter",
+    "ShardedOptimizer",
     "AsyncCheckpoint",
     "AsyncEval",
     "BaseService",
