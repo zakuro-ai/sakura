@@ -51,3 +51,14 @@ class TestCompute:
         s = repr(c)
         assert "Compute" in s
         assert "quic://localhost:4433" in s
+
+
+class TestComputeResolve:
+    def test_in_thread_resolves_to_InThreadDispatcher(self):
+        from sakura.dispatch.in_thread import InThreadDispatcher
+        d = Compute.in_thread().resolve()
+        assert isinstance(d, InThreadDispatcher)
+
+    def test_remote_resolution_is_not_yet_implemented(self):
+        with pytest.raises(NotImplementedError, match="Plan 4"):
+            Compute.at("quic://localhost:4433").resolve()
