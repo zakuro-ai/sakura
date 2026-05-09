@@ -18,12 +18,14 @@ def _make_synthetic_workload() -> Workload:
         )
 
     def make_loader():
-        # Yield 4 batches of 8 samples × 8 features → 4 classes.
+        # 32 samples × 8 features → 4 classes; batch size 8 → 4 batches.
+        # Use a real DataLoader because Lightning's Trainer.fit requires one
+        # (or auto-wraps an iterable, which produces unexpected batch shapes).
         torch.manual_seed(0)
-        return [
-            (torch.randn(8, 8), torch.randint(0, 4, (8,)))
-            for _ in range(4)
-        ]
+        ds = torch.utils.data.TensorDataset(
+            torch.randn(32, 8), torch.randint(0, 4, (32,))
+        )
+        return torch.utils.data.DataLoader(ds, batch_size=8, shuffle=False)
 
     def eval_fn(model, loader):
         correct = total = 0
@@ -56,3 +58,25 @@ def test_baseline_runner_pytorch_ddp_completes():
     assert report.samples_per_sec > 0
     assert "val_acc" in report.final_metrics
     assert report.git_sha != "" or report.git_sha == ""  # either is fine
+
+
+def test_baseline_runner_lightning_completes():
+    """Lightning baseline auto-wraps the nn.Module in a LightningModule."""
+    pytest.importorskip("lightning")
+    wl = _make_synthetic_workload()
+    runner = BaselineRunner(framework="lightning")
+    report = runner.run(wl)
+
+    assert report.workload == "synthetic-tiny-mlp"
+    assert report.framework == "lightning"
+    assert report.elapsed_secs > 0
+    assert report.samples_per_sec > 0
+    assert "val_acc" in report.final_metrics
+
+
+def test_baseline_runner_hf_trainer_raises_with_clear_message():
+    """HF Trainer baseline requires HF-shaped workloads; raises clear NotImplementedError."""
+    wl = _make_synthetic_workload()
+    runner = BaselineRunner(framework="hf-trainer")
+    with pytest.raises(NotImplementedError, match=r"PreTrainedModel"):
+        runner.run(wl)

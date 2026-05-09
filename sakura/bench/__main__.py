@@ -39,17 +39,50 @@ def _resolve_workload(name: str) -> Workload:
     return factory()
 
 
+_SERVICE_FACTORIES = {
+    "telemetry": lambda kw: __import__("sakura.services.telemetry", fromlist=["Telemetry"])
+                              .Telemetry(output=lambda _r: None),
+    "mixed_precision": lambda kw: __import__("sakura.services.mixed_precision",
+                                              fromlist=["MixedPrecision"])
+                              .MixedPrecision(dtype=kw or "auto"),
+    "compile": lambda kw: __import__("sakura.services.compile", fromlist=["Compile"])
+                              .Compile(mode=kw or "default"),
+    "activation_checkpoint": lambda kw: __import__(
+        "sakura.services.activation_checkpoint", fromlist=["ActivationCheckpoint"]
+    ).ActivationCheckpoint(target_types=()),
+    "zero1": lambda kw: __import__("sakura.services.zero1", fromlist=["ZeRO1"]).ZeRO1(),
+}
+
+
+def _build_services(specs: list[str]) -> list:
+    """Parse `--service` specs into Service instances.
+
+    Each spec is `name` or `name:kwarg` (one positional kwarg). Examples:
+      --service telemetry
+      --service mixed_precision:bf16
+      --service compile:reduce-overhead
+    """
+    services = []
+    for s in specs:
+        name, _, kwarg = s.partition(":")
+        factory = _SERVICE_FACTORIES.get(name)
+        if factory is None:
+            raise ValueError(
+                f"unknown service {name!r}; available: {sorted(_SERVICE_FACTORIES)}"
+            )
+        services.append(factory(kwarg or None))
+    return services
+
+
 def _cmd_run(args) -> int:
     wl = _resolve_workload(args.workload)
     if args.runner == "baseline":
         runner = BaselineRunner(framework=args.framework)
     elif args.runner == "sakura":
-        # Default: just install Telemetry so something is observable.
-        from sakura.services.telemetry import Telemetry
-        runner = SakuraRunner(
-            framework=args.framework,
-            services=[Telemetry(output=lambda r: None)],
-        )
+        # Build services from --service flags. Default to telemetry-only if none given.
+        specs = list(args.service) if args.service else ["telemetry"]
+        services = _build_services(specs)
+        runner = SakuraRunner(framework=args.framework, services=services)
     else:
         raise ValueError(f"unknown runner {args.runner!r}")
 
@@ -101,6 +134,13 @@ def main(argv: Optional[list[str]] = None) -> int:
                         default="pytorch-ddp")
     p_run.add_argument("--output", default=".",
                         help="Output JSON path (or directory; auto-names if dir).")
+    p_run.add_argument("--service", action="append", default=[],
+                        help=(
+                            "Service to install on the SakuraRuntime (repeatable). "
+                            "Format: name[:kwarg]. Available: "
+                            f"{sorted(_SERVICE_FACTORIES)}. Examples: "
+                            "--service mixed_precision:bf16 --service compile:reduce-overhead"
+                        ))
     p_run.set_defaults(func=_cmd_run)
 
     p_cmp = sub.add_parser("compare", help="compare RunReport JSON files (pairs: baseline, sakura)")
