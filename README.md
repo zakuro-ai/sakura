@@ -186,7 +186,7 @@ Five execution states cover every dispatching combination: in-thread (synchronou
 | Service | Priority | Hooks consumed | What it does |
 |---|---|---|---|
 | `Telemetry` | 0 | every event | JSON record sink (callable / file / stream) |
-| `MixedPrecision` | 10 | train_begin, optimizer_step | wraps forward in `torch.autocast`; `GradScaler` for fp16 |
+| `MixedPrecision` | 10 | train_begin, optimizer_step, wrap_loss, optimizer_step (step) | wraps forward in `torch.autocast`; for fp16, scales loss + drives `GradScaler.step()/update()` via runtime.optimizer_step replacing the loop's default |
 | `ActivationCheckpoint` | 15 | train_begin | wraps matching submodules with `torch.utils.checkpoint` |
 | `Compile` | 20 | train_begin | `torch.compile` with on-disk cache |
 | `ZeRO1` | 30 | train_begin, optimizer_step | optimizer-state sharding (single-rank passthrough; multi-rank in progress) |
@@ -194,6 +194,13 @@ Five execution states cover every dispatching combination: in-thread (synchronou
 | `AsyncCheckpoint` | 85 | epoch_end | dispatch state-dict write; modes: epoch / N / best |
 
 Lower priority runs earlier. Service exceptions are isolated — one service crashing emits an `OnError` event but doesn't block the others.
+
+In addition to event handlers, services may implement two optional runtime-coordinated methods:
+
+- `wrap_loss(loss) -> loss` — invoked by `runtime.scale_loss(loss)` before `loss.backward()`. Threads the loss through every service in priority order. `MixedPrecision` uses this to apply `GradScaler.scale()` for fp16; bf16/fp8/auto are passthroughs.
+- `optimizer_step(optimizer) -> bool` — invoked by `runtime.optimizer_step(opt)` after the `OnOptimizerStep` event. First service to return `True` claims the step, and the loop must skip its default `opt.step()`. `MixedPrecision` returns `True` for fp16 to drive `GradScaler.step()/update()`; otherwise returns `False` and the loop steps as usual.
+
+These hooks are honored by the bench harness's raw-pytorch loop. Lightning / HF Trainer manage their own step lifecycles and don't dispatch through these methods — use the framework's native precision config there.
 
 ## Adapters
 
@@ -247,7 +254,7 @@ Available workloads: `mnist-mlp`, `cifar10-resnet50`, `distilbert-sst2`, `distil
 
 ### Known limitations
 
-- **`MixedPrecision` fp16 + GradScaler integration is incomplete.** `on_optimizer_step` unscales gradients and applies grad-clip, but does **not** call `scaler.step()` / `scaler.update()` — the framework's training loop owns `opt.step()` and the service can't currently override it. fp16 inf/nan detection and dynamic scale updates therefore don't run; if a NaN appears it propagates through the loop's step. `bf16` (the default for `dtype="auto"` on Ampere+) does not need a scaler and works as advertised.
+- **`MixedPrecision` fp16 in non-DDP framework loops.** Lightning's automatic-optimization and HF Trainer own `opt.step()` themselves and don't expose an interception point — for those frameworks, configure precision via `L.Trainer(precision="16-mixed")` or HF's `TrainingArguments(fp16=True)` instead of installing this service. The runtime-coordinated step replacement (`runtime.scale_loss(loss)` + `runtime.optimizer_step(opt)`) is honored by sakura's raw-DDP loop, where the full fp16 path (scale → backward → unscale → grad-clip → scaler.step → scaler.update with inf/nan check + dynamic scale update) runs end-to-end.
 - **`ZeRO1` multi-rank** uses cyclic dealing across ranks via `gloo` for parameter all-gather; the single-rank path is a passthrough.
 - The cross-framework speed comparison vs. raw HuggingFace Trainer / Lightning *without* sakura is wired (`BaselineRunner` covers `pytorch-ddp`, `lightning`, and `hf-trainer`); populating the markdown table from real hardware runs is the next milestone.
 

@@ -135,6 +135,48 @@ class SakuraRuntime:
         """Return a copy of the rolled-up event log."""
         return list(self._history)
 
+    def scale_loss(self, loss):
+        """Thread a loss tensor through every service that implements wrap_loss.
+
+        Services iterate in priority order. Each can return a wrapped loss
+        (e.g., MixedPrecision returns scaler.scale(loss) for fp16). Services
+        that don't implement wrap_loss leave the loss unchanged.
+
+        This is the runtime-level coordinator for "before backward" loss
+        manipulation — services should not directly observe loss; the loop
+        passes it through here so any combination of services compose.
+        """
+        for s in self._sorted:
+            wrap = getattr(s, "wrap_loss", None)
+            if callable(wrap):
+                try:
+                    loss = wrap(loss)
+                except BaseException:
+                    _log.exception("service '%s' wrap_loss failed", s.name)
+        return loss
+
+    def optimizer_step(self, optimizer) -> bool:
+        """Give services a chance to step the optimizer themselves.
+
+        Returns True if any service handled the step (loop should NOT call
+        opt.step() afterward). Returns False if no service claimed it (loop
+        should call opt.step() as usual).
+
+        First-claim-wins: once a service returns True, subsequent services
+        are not called for the step. This avoids double-stepping when
+        multiple services are installed but only one (typically
+        MixedPrecision in fp16 mode) actually wants to drive the step.
+        """
+        for s in self._sorted:
+            stepper = getattr(s, "optimizer_step", None)
+            if callable(stepper):
+                try:
+                    if stepper(optimizer):
+                        return True
+                except BaseException:
+                    _log.exception("service '%s' optimizer_step failed", s.name)
+        return False
+
     def _rebuild_sorted(self) -> None:
         indexed = list(enumerate(self._services))
         indexed.sort(key=lambda pair: (pair[1].priority, pair[0]))

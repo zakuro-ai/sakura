@@ -109,23 +109,14 @@ class MixedPrecision(BaseService):
     def on_optimizer_step(self, event: OnOptimizerStep) -> None:
         """Pre-step hook: unscale (fp16) and clip gradients.
 
-        IMPORTANT: this method does NOT call opt.step(). The framework's
-        training loop is responsible for calling opt.step() exactly once per
-        batch. Calling step here would result in double-stepping when the
-        adapter emits the OnOptimizerStep event before the loop's own step.
-
-        For the fp16 path, the GradScaler's step+update *should* replace the
-        loop's opt.step() — that's a known integration gap (services
-        currently can't override the loop's step). For now we unscale here
-        so the loop's opt.step() sees real gradients, but the scaler's
-        inf/nan check + scale-update doesn't run. Documented as a known
-        limitation in the README's MixedPrecision notes.
+        For fp16: unscales in place so subsequent ops (grad-clip here, and
+        the scaler's own step in optimizer_step()) see real magnitudes.
+        Does NOT call opt.step() — that's coordinated by
+        SakuraRuntime.optimizer_step which delegates to this service's
+        optimizer_step() method (returns True for fp16, False otherwise).
         """
         opt = event.optimizer
         if self._scaler is not None:
-            # fp16 + CUDA: unscale gradients in place so the loop's opt.step()
-            # operates on the real values. The scaler's inf/nan check is NOT
-            # performed; if a NaN appears the loop's step propagates it.
             self._scaler.unscale_(opt)
         if self._grad_clip is not None:
             import torch
@@ -134,6 +125,33 @@ class MixedPrecision(BaseService):
             for group in opt.param_groups:
                 params.extend(group["params"])
             torch.nn.utils.clip_grad_norm_(params, self._grad_clip)
+
+    # ............................................. runtime-coordinated hooks
+
+    def wrap_loss(self, loss):
+        """fp16: scale the loss so backward produces representable gradients.
+
+        bf16/fp8/auto: passthrough. Called by SakuraRuntime.scale_loss
+        before the loop's loss.backward().
+        """
+        if self._scaler is not None:
+            return self._scaler.scale(loss)
+        return loss
+
+    def optimizer_step(self, optimizer) -> bool:
+        """fp16: drive the step via scaler (inf/nan check + scale-factor update).
+
+        Returns True for fp16 so the loop's default opt.step() is skipped.
+        Returns False otherwise. scaler.step(opt) internally calls opt.step()
+        iff unscaled grads are finite; scaler.update() then shrinks/grows
+        the scale factor — the dynamic-loss-scaling that the prior unscale-
+        only integration was missing.
+        """
+        if self._scaler is None:
+            return False
+        self._scaler.step(optimizer)
+        self._scaler.update()
+        return True
 
     # ............................................................. helpers
 

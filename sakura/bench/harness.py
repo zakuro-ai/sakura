@@ -459,9 +459,14 @@ class SakuraRunner(BaselineRunner):
                 opt.zero_grad()
                 logits = model(x)
                 loss = self._compute_loss(logits, y)
+                # Services may scale the loss before backward (fp16 GradScaler).
+                loss = rt.scale_loss(loss)
                 loss.backward()
                 adapter.on_optimizer_step(opt)
-                opt.step()
+                # Services may drive the step (e.g. fp16 GradScaler.step+update).
+                # If none claims it, the loop steps as usual.
+                if not rt.optimizer_step(opt):
+                    opt.step()
                 n_samples += y.size(0) if hasattr(y, "size") else len(y)
             model.eval()
             dev_val_loader = _DeviceLoader(val_loader, device)
