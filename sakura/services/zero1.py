@@ -1,8 +1,7 @@
-"""ZeRO1 — optimizer-state sharding (stage 1) — Plan 3 single-rank stub.
+"""ZeRO1 — optimizer-state sharding stage 1.
 
-Plan 3 ships the wrap structure + correctness for world_size=1 (passthrough).
-Multi-rank sharding (cyclic dealing of param groups across ranks + all_gather
-of updated weights) is Plan 5 work where real DDP is exercised.
+Plan 3 shipped single-rank passthrough. Plan 5 adds the multi-rank path
+via sakura.zero.ShardedOptimizer (cyclic param dealing + broadcast).
 """
 from __future__ import annotations
 
@@ -28,30 +27,30 @@ class ZeRO1(BaseService):
         self._bucket_size_mb = bucket_size_mb
         self._cpu_offload = cpu_offload
         self._original_optimizer: Optional[Any] = None
+        self._sharded: Optional[Any] = None
 
     def on_train_begin(self, event: OnTrainBegin):
-        # World-size==1 fast path: passthrough, no sharding.
-        if event.world_size <= 1:
-            self._original_optimizer = event.optimizer
-            return
-        # Multi-rank: shard optimizer state cyclically across ranks.
-        # Plan 3 placeholder: full implementation in Plan 5.
-        # For now we still install but no actual sharding.
         self._original_optimizer = event.optimizer
+        if event.world_size > 1:
+            from sakura.zero.sharded_optimizer import ShardedOptimizer
+            self._sharded = ShardedOptimizer(
+                event.optimizer, process_group=self._process_group
+            )
 
     def on_optimizer_step(self, event: OnOptimizerStep):
-        # World-size==1: just passthrough to opt.step().
-        # Multi-rank: would step on local shard then all_gather updated weights.
-        opt = event.optimizer
-        if hasattr(opt, "step"):
-            opt.step()
+        if self._sharded is not None:
+            self._sharded.step()
+        else:
+            opt = event.optimizer
+            if hasattr(opt, "step"):
+                opt.step()
 
     def on_train_end(self, event: OnTrainEnd):
-        # Restore unsharded optimizer (no-op for world_size==1).
-        pass
+        # Nothing to restore — underlying optimizer was never replaced; we
+        # just kept a wrapper alongside.
+        self._sharded = None
 
     def gather_state_dict(self, model) -> dict:
-        """Return the full (gathered) state dict. World_size==1 returns model.state_dict() directly."""
         return dict(model.state_dict())
 
 

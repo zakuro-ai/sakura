@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sakura-ml"
-version = "1.0.0a0"
+version = "1.0.0a1"
 description = "Sakura: SOTA training services for PyTorch DDP / Lightning / HuggingFace Trainer."
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -46,6 +46,7 @@ dev = ["pytest", "maturin>=1.4"]
 
 [project.scripts]
 sakura-worker = "sakura.worker.__main__:main"
+sakura-bench = "sakura.bench.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -54,3 +55,4 @@ testpaths = ["tests"]
 manifest-path = "crates/sakura-wire/Cargo.toml"
 module-name = "sakura_wire"
 features = ["pyo3/extension-module"]
+python-packages = ["sakura"]

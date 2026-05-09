@@ -64,6 +64,45 @@ pub fn pack_request(
 /// Unpacked components of a wire request: header, descriptors, tensor payloads, aux bytes.
 pub type UnpackedRequest = (RpcRequestHeader, Vec<TensorDesc>, Vec<Vec<u8>>, Vec<u8>);
 
+/// Like pack_request, but returns Vec<Bytes> chunks for quinn::SendStream::write_all_chunks.
+///
+/// Each tensor's bytes become a separate `Bytes` wrapping a copy of the buffer.
+/// Compared to `pack_request` (which `Vec::extend_from_slice` consolidates everything
+/// into one giant `Vec<u8>`), this avoids the final consolidation memcpy. quinn writes
+/// the chunks directly to the QUIC stream — under the hood quinn coalesces but avoids
+/// the full O(N) `Vec::with_capacity + extend`.
+///
+/// Note: true zero-copy would require the caller to supply owned `Bytes` from the source
+/// (the PyO3 buffer protocol gives borrowed `&[u8]`, so one copy per tensor is unavoidable).
+pub fn pack_request_zero_copy(
+    header: &RpcRequestHeader,
+    tensors: &[TensorView<'_>],
+    aux: &[u8],
+) -> Result<Vec<bytes::Bytes>, CodecError> {
+    let descs: Vec<TensorDesc> = tensors.iter().map(|t| t.desc.clone()).collect();
+    let header_bytes =
+        postcard::to_allocvec(header).map_err(|e| CodecError::Encode(e.to_string()))?;
+    let descs_bytes =
+        postcard::to_allocvec(&descs).map_err(|e| CodecError::Encode(e.to_string()))?;
+
+    // Slots: 4-byte header-len prefix, header body, 4-byte descs-len prefix, descs body,
+    //        one chunk per tensor body, aux body.
+    let mut chunks: Vec<bytes::Bytes> = Vec::with_capacity(4 + tensors.len() + 1);
+    chunks.push(bytes::Bytes::copy_from_slice(
+        &(header_bytes.len() as u32).to_le_bytes(),
+    ));
+    chunks.push(bytes::Bytes::from(header_bytes));
+    chunks.push(bytes::Bytes::copy_from_slice(
+        &(descs_bytes.len() as u32).to_le_bytes(),
+    ));
+    chunks.push(bytes::Bytes::from(descs_bytes));
+    for t in tensors {
+        chunks.push(bytes::Bytes::copy_from_slice(t.bytes));
+    }
+    chunks.push(bytes::Bytes::copy_from_slice(aux));
+    Ok(chunks)
+}
+
 /// Unpack a request buffer into header + descriptors + per-tensor byte slices + aux bytes.
 /// Returns owned bytes for tensors so the caller can reuse the input buffer.
 pub fn unpack_request(buf: &[u8]) -> Result<UnpackedRequest, CodecError> {
