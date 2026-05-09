@@ -54,3 +54,4 @@ testpaths = ["tests"]
 manifest-path = "crates/sakura-wire/Cargo.toml"
 module-name = "sakura_wire"
 features = ["pyo3/extension-module"]
+python-packages = ["sakura"]
