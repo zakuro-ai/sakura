@@ -39,7 +39,6 @@ huggingface = [
     "datasets>=2.14.0",
     "accelerate>=1.1.0",
 ]
-tensorflow = ["tensorflow>=2.15.0"]
 bench = ["sakura-ml[huggingface]"]
 
 [dependency-groups]
