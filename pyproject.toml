@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sakura-ml"
-version = "1.0.0a0"
+version = "1.0.0a1"
 description = "Sakura: SOTA training services for PyTorch DDP / Lightning / HuggingFace Trainer."
 readme = "README.md"
 license = "BSD-3-Clause"

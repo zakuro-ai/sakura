@@ -1,16 +1,18 @@
 """Sakura — SOTA training services for PyTorch DDP / Lightning / HuggingFace Trainer.
 
-Plan 1 added the sakura-wire transport (Rust). Plan 2 the Python orchestration
-surface (SakuraRuntime, Service ABC, Dispatcher). Plan 3 the seven v1 services.
-Plan 4 the framework adapters (Lightning/HF/DDP) and removed v0.1.x.
-Plan 5 (future) the benchmark harness + multi-rank ZeRO1 + maturin packaging.
+Plan 1: Rust sakura-wire transport (codec + QUIC + worker subprocess).
+Plan 2: Python orchestration surface (SakuraRuntime, Service ABC, Dispatcher).
+Plan 3: seven v1 services (Telemetry, MixedPrecision, Compile, ZeRO1, ...).
+Plan 4: framework adapters (Lightning/HF/DDP) + v0.1.x removal.
+Plan 5: benchmark harness, multi-rank ZeRO1, maturin packaging, codec
+        zero-copy producer path, README/migration docs.
 
 Users on v0.1.x should pin `sakura-ml<1.0` if they're not migrating to the
 new SakuraRuntime + Adapter + Service surface.
 """
 
-__version__ = "1.0.0a0"
-__build__ = "2026-05-08T00:00:00Z"
+__version__ = "1.0.0a1"
+__build__ = "2026-05-09T00:00:00Z"
 
 from sakura.adapters import Adapter, DDPAdapter, HFAdapter, LightningAdapter
 from sakura.dispatch import Compute, Dispatcher, Future, Result
