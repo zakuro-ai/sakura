@@ -189,7 +189,7 @@ Five execution states cover every dispatching combination: in-thread (synchronou
 | `MixedPrecision` | 10 | train_begin, optimizer_step, wrap_loss, optimizer_step (step) | wraps forward in `torch.autocast`; for fp16, scales loss + drives `GradScaler.step()/update()` via runtime.optimizer_step replacing the loop's default |
 | `ActivationCheckpoint` | 15 | train_begin | wraps matching submodules with `torch.utils.checkpoint` |
 | `Compile` | 20 | train_begin | `torch.compile` with on-disk cache |
-| `ZeRO1` | 30 | train_begin, optimizer_step | optimizer-state sharding (single-rank passthrough; multi-rank in progress) |
+| `ZeRO1` | 30 | train_begin, optimizer_step | optimizer-state sharding (cyclic dealing across ranks; single-rank passthrough). Multi-rank correctness verified against single-rank reference under gloo. |
 | `AsyncEval` | 80 | epoch_end | dispatch eval to worker; lazy future drain |
 | `AsyncCheckpoint` | 85 | epoch_end | dispatch state-dict write; modes: epoch / N / best |
 
@@ -298,7 +298,7 @@ Median over 7 trials, `OMP_NUM_THREADS=2`. Identical val_acc at convergence (eva
 ### Known limitations
 
 - **`MixedPrecision` fp16 in non-DDP framework loops.** Lightning's automatic-optimization and HF Trainer own `opt.step()` themselves and don't expose an interception point — for those frameworks, configure precision via `L.Trainer(precision="16-mixed")` or HF's `TrainingArguments(fp16=True)` instead of installing this service. The runtime-coordinated step replacement (`runtime.scale_loss(loss)` + `runtime.optimizer_step(opt)`) is honored by sakura's raw-DDP loop, where the full fp16 path (scale → backward → unscale → grad-clip → scaler.step → scaler.update with inf/nan check + dynamic scale update) runs end-to-end.
-- **`ZeRO1` multi-rank** uses cyclic dealing across ranks via `gloo` for parameter all-gather; the single-rank path is a passthrough.
+- **`ZeRO1` multi-rank** uses cyclic dealing (param `i` owned by rank `i % world_size`) and per-shard `opt.step()` followed by parameter broadcast. Verified bit-equivalent to a single-rank `opt.step()` over 1- and 5-step SGD trajectories under `gloo` (see `tests/zero/test_sharded_optimizer_multi_rank.py`); NCCL multi-rank is not yet exercised in CI.
 - The cross-framework speed comparison vs. raw HuggingFace Trainer / Lightning *without* sakura is wired (`BaselineRunner` covers `pytorch-ddp`, `lightning`, and `hf-trainer`); populating the markdown table from real hardware runs is the next milestone.
 
 ## Migrating from v0.1.x
