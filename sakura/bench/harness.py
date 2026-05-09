@@ -8,9 +8,18 @@ from __future__ import annotations
 import json
 import platform
 import subprocess
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Literal, Optional
+
+
+def _cuda_available() -> bool:
+    try:
+        import torch
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
 
 
 @dataclass
@@ -180,21 +189,85 @@ class BaselineRunner:
     def _run_hf(self, workload: Workload) -> RunReport:
         """HuggingFace Trainer baseline.
 
-        Requires the workload's make_model() to return a transformers.PreTrainedModel
-        whose forward returns a ModelOutput with `.loss` (i.e., the model accepts
-        labels and computes loss internally). None of the current workloads
-        (mnist-mlp, cifar10-resnet50, distilbert-sst2-with-wrapper) satisfy this —
-        so this path raises with a clear message until an HF-shaped workload lands.
+        Contract: workload.make_model() returns a transformers.PreTrainedModel
+        whose forward(**batch) returns ModelOutput with `.loss` and `.logits`,
+        and the loaders yield single-dict batches containing a `labels` key.
+        See sakura/bench/workloads/distilbert_hf.py for a reference workload.
         """
-        raise NotImplementedError(
-            "HF Trainer baseline requires workload.make_model() to return a "
-            "transformers.PreTrainedModel with a .forward(...) that returns "
-            "ModelOutput.loss. None of sakura's bundled workloads currently match "
-            "this contract. For HF-shaped models, build a Workload whose "
-            "make_model returns the raw transformers model (no wrapper) and "
-            "whose loaders yield dicts with 'labels' keys. For now, use "
-            "framework='pytorch-ddp' or 'lightning' for cross-framework "
-            "comparisons."
+        return self._run_hf_impl(workload, callbacks=None)
+
+    def _run_hf_impl(self, workload: Workload, callbacks=None) -> RunReport:
+        """Shared body of the HF Trainer baseline + sakura paths.
+
+        When `callbacks` is None: pure baseline.
+        When `callbacks` is a list (typically [HFAdapter(rt)]): the adapter
+        translates Trainer hooks into runtime events so installed services
+        observe the lifecycle.
+        """
+        from transformers import Trainer, TrainingArguments
+
+        model = workload.make_model()
+        train_loader = workload.make_train_loader()
+        val_loader = workload.make_val_loader()
+
+        # Trainer wants a Dataset + collator; pull them off the loader.
+        train_dataset = getattr(train_loader, "dataset", None)
+        collate_fn = getattr(train_loader, "collate_fn", None)
+        batch_size = getattr(train_loader, "batch_size", 8) or 8
+        if train_dataset is None:
+            raise ValueError(
+                "HF Trainer baseline requires workload.make_train_loader() to "
+                "return a torch.utils.data.DataLoader (we read .dataset and "
+                ".collate_fn off it)."
+            )
+
+        with tempfile.TemporaryDirectory(prefix="sakura-hf-") as out_dir:
+            args = TrainingArguments(
+                output_dir=out_dir,
+                num_train_epochs=workload.epochs,
+                per_device_train_batch_size=batch_size,
+                logging_strategy="no",
+                save_strategy="no",
+                eval_strategy="no",
+                report_to=[],
+                disable_tqdm=True,
+                use_cpu=not _cuda_available(),
+                dataloader_num_workers=0,
+            )
+            trainer = Trainer(
+                model=model,
+                args=args,
+                data_collator=collate_fn,
+                train_dataset=train_dataset,
+                callbacks=list(callbacks) if callbacks else None,
+            )
+
+            t0 = time.perf_counter()
+            trainer.train()
+            elapsed = time.perf_counter() - t0
+
+        try:
+            n_samples = len(train_dataset) * workload.epochs
+        except (AttributeError, TypeError):
+            n_samples = 0
+
+        # Eval on the trained model. The Trainer may have moved it to GPU.
+        eval_model = trainer.model
+        eval_model.eval()
+        device = next(eval_model.parameters()).device
+        device_str = device.type if hasattr(device, "type") else str(device)
+        dev_val_loader = _DeviceLoader(val_loader, device_str)
+        final_metrics = workload.eval_fn(eval_model, dev_val_loader)
+
+        return RunReport(
+            workload=workload.name,
+            framework=self.framework,
+            elapsed_secs=elapsed,
+            samples_per_sec=n_samples / max(elapsed, 1e-9),
+            peak_gpu_mem_mb=self._peak_gpu_mem_mb(),
+            final_metrics=final_metrics,
+            git_sha=detect_git_sha(),
+            hardware=detect_hardware(),
         )
 
     def _run_lightning_impl(self, workload: Workload, adapter=None) -> RunReport:
@@ -331,12 +404,8 @@ class SakuraRunner(BaselineRunner):
             with rt:
                 report = self._run_lightning_with_adapter(workload, rt)
         elif self.framework == "hf-trainer":
-            # Defer to BaselineRunner._run_hf which raises a clear error.
-            raise NotImplementedError(
-                "SakuraRunner framework='hf-trainer' requires an HF-shaped Workload; "
-                "see BaselineRunner._run_hf for the contract. Use 'pytorch-ddp' or "
-                "'lightning' for now."
-            )
+            with rt:
+                report = self._run_hf_with_adapter(workload, rt)
         else:
             raise NotImplementedError(
                 f"SakuraRunner framework={self.framework!r} not yet wired"
@@ -352,6 +421,16 @@ class SakuraRunner(BaselineRunner):
         from sakura.adapters.lightning import LightningAdapter
         adapter = LightningAdapter(rt, rank=0, world_size=1)
         return self._run_lightning_impl(workload, adapter=adapter)
+
+    def _run_hf_with_adapter(self, workload: Workload, rt) -> RunReport:
+        """Sakura + HF Trainer: install HFAdapter as a Trainer callback.
+
+        Reuses BaselineRunner._run_hf_impl with callbacks=[HFAdapter(rt)] so
+        runtime services observe Trainer's lifecycle hooks.
+        """
+        from sakura.adapters.huggingface import HFAdapter
+        adapter = HFAdapter(rt, rank=0, world_size=1)
+        return self._run_hf_impl(workload, callbacks=[adapter])
 
     def _run_raw_pytorch_with_adapter(self, workload: Workload, rt) -> RunReport:
         import torch

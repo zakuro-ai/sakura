@@ -20,6 +20,7 @@ _WORKLOAD_REGISTRY = {
     "mnist-mlp": "sakura.bench.workloads.mnist:make_workload",
     "cifar10-resnet50": "sakura.bench.workloads.cifar:make_workload",
     "distilbert-sst2": "sakura.bench.workloads.distilbert:make_workload",
+    "distilbert-sst2-hf": "sakura.bench.workloads.distilbert_hf:make_workload",
     "llama3-1b-finetune": "sakura.bench.workloads.llama:make_workload",
     "mistral-7b-lora": "sakura.bench.workloads.mistral:make_workload",
     "distilbert-glue": "sakura.bench.workloads.glue:make_workload",

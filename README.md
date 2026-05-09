@@ -225,6 +225,14 @@ sakura-bench run --workload mnist-mlp --runner baseline --framework pytorch-ddp 
 sakura-bench run --workload cifar10-resnet50 --runner sakura --framework pytorch-ddp \
     --service telemetry --service mixed_precision:bf16 --output reports/
 
+# HuggingFace Trainer baseline (HF-shaped workload required)
+sakura-bench run --workload distilbert-sst2-hf --runner baseline --framework hf-trainer \
+    --output reports/
+
+# sakura on top of HF Trainer
+sakura-bench run --workload distilbert-sst2-hf --runner sakura --framework hf-trainer \
+    --service telemetry --output reports/
+
 # pair-wise comparison
 sakura-bench compare reports/cifar10-resnet50-baseline-pytorch-ddp.json \
                      reports/cifar10-resnet50-sakura-pytorch-ddp.json
@@ -233,7 +241,7 @@ sakura-bench compare reports/cifar10-resnet50-baseline-pytorch-ddp.json \
 sakura-bench export reports/*.json
 ```
 
-Available workloads: `mnist-mlp`, `cifar10-resnet50`, `distilbert-sst2`, `distilbert-glue`, `llama3-1b-finetune`, `mistral-7b-lora`. Available frameworks: `pytorch-ddp`, `lightning`, `hf-trainer` (HF Trainer baseline requires HF-shaped workloads — `distilbert-sst2`, `distilbert-glue`).
+Available workloads: `mnist-mlp`, `cifar10-resnet50`, `distilbert-sst2`, `distilbert-sst2-hf`, `distilbert-glue`, `llama3-1b-finetune`, `mistral-7b-lora`. Available frameworks: `pytorch-ddp`, `lightning`, `hf-trainer`. The `hf-trainer` framework requires an HF-shaped workload — one whose `make_model()` returns a `transformers.PreTrainedModel` (or any model whose `forward(**batch)` returns an output with `.loss`) and whose loaders yield single-dict batches with a `labels` key. `distilbert-sst2-hf` is the reference HF-shaped workload; `distilbert-sst2` (with the wrapper) targets the pytorch-ddp / lightning loops.
 
 **Honest framing.** The harness is real and ships; the headline speed numbers do not yet. Microbenchmarks on tiny CPU workloads (1-epoch MNIST/MLP, 1-epoch CIFAR with 32 train samples) show per-event service-dispatch overhead exceeding the wins from `MixedPrecision` / `Compile` at that scale — `AsyncEval` and `AsyncCheckpoint` need workloads where eval/checkpoint cost is meaningful relative to one training epoch before they amortize. Validating the speed claim requires GPU runs on the larger tiers (`cifar10-resnet50` full, `distilbert-glue`, `llama3-1b-finetune`) on real hardware, which has not been done in this release. Treat this as: harness ready, numbers TBD.
 
@@ -241,7 +249,7 @@ Available workloads: `mnist-mlp`, `cifar10-resnet50`, `distilbert-sst2`, `distil
 
 - **`MixedPrecision` fp16 + GradScaler integration is incomplete.** `on_optimizer_step` unscales gradients and applies grad-clip, but does **not** call `scaler.step()` / `scaler.update()` — the framework's training loop owns `opt.step()` and the service can't currently override it. fp16 inf/nan detection and dynamic scale updates therefore don't run; if a NaN appears it propagates through the loop's step. `bf16` (the default for `dtype="auto"` on Ampere+) does not need a scaler and works as advertised.
 - **`ZeRO1` multi-rank** uses cyclic dealing across ranks via `gloo` for parameter all-gather; the single-rank path is a passthrough.
-- The cross-framework speed comparison vs. raw HuggingFace Trainer / Lightning *without* sakura is wired through `BaselineRunner`; populating the markdown table from real hardware runs is the next milestone.
+- The cross-framework speed comparison vs. raw HuggingFace Trainer / Lightning *without* sakura is wired (`BaselineRunner` covers `pytorch-ddp`, `lightning`, and `hf-trainer`); populating the markdown table from real hardware runs is the next milestone.
 
 ## Migrating from v0.1.x
 
