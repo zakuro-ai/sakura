@@ -50,3 +50,31 @@ def test_distilbert_workload_runs_one_epoch():
     assert report.workload == "distilbert-sst2"
     assert report.elapsed_secs > 0
     assert "val_acc" in report.final_metrics
+
+
+import pytest
+
+
+def test_llama_workload_skips_without_gpu():
+    """Llama-3-1B is perf-tier; skip cleanly on CPU-only."""
+    if torch.cuda.is_available() and torch.cuda.device_count() >= 1:
+        pytest.skip("Llama-3-1B perf-tier workload not yet implemented")
+    from sakura.bench.workloads.llama import make_workload
+    wl = make_workload()
+    assert wl.tier == "perf"
+    # Calling make_model without a GPU raises:
+    with pytest.raises(NotImplementedError, match="GPU|stub"):
+        wl.make_model()
+
+
+def test_mistral_workload_is_perf_tier_stub():
+    from sakura.bench.workloads.mistral import make_workload
+    wl = make_workload()
+    assert wl.tier == "perf"
+    assert "mistral" in wl.name.lower()
+
+
+def test_glue_workload_is_perf_tier_stub():
+    from sakura.bench.workloads.glue import make_workload
+    wl = make_workload()
+    assert wl.tier == "perf"
