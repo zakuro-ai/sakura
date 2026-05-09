@@ -4,6 +4,7 @@ from sakura.dispatch.compute import Compute
 from sakura.dispatch.in_thread import InThreadDispatcher
 from sakura.dispatch.local import LocalDispatcher
 from sakura.dispatch.remote import RemoteDispatcher
+from sakura.dispatch.zakuro import ZakuroDispatcher
 
 __all__ = [
     "Compute",
@@ -13,4 +14,5 @@ __all__ = [
     "LocalDispatcher",
     "RemoteDispatcher",
     "Result",
+    "ZakuroDispatcher",
 ]

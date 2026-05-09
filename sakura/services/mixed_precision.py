@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional, Union
 
-from sakura.events import OnOptimizerStep, OnTrainBegin, OnTrainStepBegin
+from sakura.events import OnOptimizerStep, OnTrainBegin, OnTrainEnd, OnTrainStepBegin
 from sakura.service import BaseService
 
 
@@ -41,6 +41,7 @@ class MixedPrecision(BaseService):
         self._cache_enabled = cache_enabled
         self._scaler = None
         self._autocast_ctx = None
+        self._original_forward = None
 
     def on_install(self, runtime: Any) -> None:
         # No-op at install — we wait for OnTrainBegin to inspect the model device.
@@ -73,6 +74,30 @@ class MixedPrecision(BaseService):
                     enabled=True,
                     init_scale=init_scale,
                 )
+
+        # Wrap forward with autocast for the duration of training.
+        device_type = self._device_type_from(event.model)
+        actual_dtype = self._resolve_dtype(device_type)
+        original_forward = event.model.forward
+        autocast_dtype = actual_dtype
+
+        def _wrapped_forward(*args, **kwargs):
+            with torch.autocast(device_type=device_type, dtype=autocast_dtype,
+                                enabled=True, cache_enabled=self._cache_enabled):
+                return original_forward(*args, **kwargs)
+
+        # Stash the fact that we wrapped, so we can undo at on_train_end.
+        self._original_forward = True  # sentinel: wrapping is active
+        event.model.forward = _wrapped_forward
+
+    def on_train_end(self, event: OnTrainEnd) -> None:
+        if self._original_forward is not None:
+            # Remove the instance-attr wrapper so the class descriptor takes over.
+            try:
+                del event.model.forward
+            except AttributeError:
+                pass
+            self._original_forward = None
 
     def on_train_step_begin(self, event: OnTrainStepBegin) -> None:
         # Enter autocast context. We rely on caller to wrap the forward.
