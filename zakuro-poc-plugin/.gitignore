@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Local config
+zakuro-poc.json
+config/zakuro-poc.local.json
+
+# Artifacts
+zakuro-artifacts/
+tmp/
+*.log
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/

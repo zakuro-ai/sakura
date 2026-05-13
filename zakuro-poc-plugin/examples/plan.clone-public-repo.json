@@ -1,0 +1,18 @@
+{
+  "job_name": "clone-public-repo-demo",
+  "backend": "docker",
+  "image": "alpine/git:2.45.2",
+  "command": ["clone", "--depth", "1", "https://github.com/octocat/Hello-World.git", "/workspace/repo"],
+  "working_dir": null,
+  "repo_url": "https://github.com/octocat/Hello-World.git",
+  "env": {},
+  "resource_limits": {
+    "cpu_count": 1.0,
+    "memory_mb": 512,
+    "gpu_count": 0,
+    "timeout_seconds": 60
+  },
+  "artifact_dir": null,
+  "network_enabled": true,
+  "created_by": "claude-code"
+}

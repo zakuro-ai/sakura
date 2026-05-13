@@ -1,0 +1,18 @@
+{
+  "job_name": "python-computation-demo",
+  "backend": "docker",
+  "image": "python:3.11-slim",
+  "command": ["python", "-c", "import math; print(sum(math.sqrt(i) for i in range(10000)))"],
+  "working_dir": null,
+  "repo_url": null,
+  "env": {},
+  "resource_limits": {
+    "cpu_count": 1.0,
+    "memory_mb": 512,
+    "gpu_count": 0,
+    "timeout_seconds": 30
+  },
+  "artifact_dir": null,
+  "network_enabled": false,
+  "created_by": "claude-code"
+}
