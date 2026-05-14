@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-BackendType = Literal["noop", "docker"]
+BackendType = Literal["noop", "docker", "zakuro"]
 JobStatus = Literal["succeeded", "failed", "timed_out", "rejected"]
 
 

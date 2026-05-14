@@ -13,8 +13,7 @@ Claude/Codex
   -> zakuro-poc CLI
   -> plan validation
   -> backend adapter
-  -> DockerBackend today
-  -> ZakuroBackend / zc execute tomorrow
+  -> DockerBackend or ZakuroBackend
   -> ExecutionResult
   -> artifacts
 ```
@@ -83,4 +82,4 @@ The Docker smoke suite requires access to the host Docker socket. In sandboxed a
 Check Docker daemon.
 
 ## Roadmap: Replacing Docker with `zc execute`
-Future updates should add a `ZakuroBackend` only after the current plan, validation, consent, result, and artifact semantics are preserved. See `docs/ZAKURO_BACKEND_PLAN.md`.
+`ZakuroBackend` is available as a conservative adapter around a configurable `zc execute --plan <plan.json> --json` command. Live `zc` usage should remain gated until the external `zc` command contract and artifact-return behaviour are confirmed. See `docs/ZAKURO_BACKEND_PLAN.md`.

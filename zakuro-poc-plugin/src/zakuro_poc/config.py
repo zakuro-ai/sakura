@@ -10,6 +10,14 @@ class DockerConfig(BaseModel):
     read_only_root: bool = False
     network_mode: Literal["none", "bridge"] = "none"
     pids_limit: int = Field(default=256, ge=1)
+    user: str = "65532:65532"
+
+
+class ZakuroBackendConfig(BaseModel):
+    executable: str = Field(default="zc", min_length=1)
+    execute_args: list[str] = Field(default_factory=lambda: ["execute"])
+    plan_arg: str = "--plan"
+    json_arg: str = "--json"
 
 
 class ZakuroPocConfig(BaseModel):
@@ -23,6 +31,7 @@ class ZakuroPocConfig(BaseModel):
     max_memory_mb: int = Field(default=4096, ge=128)
     max_cpu_count: float = Field(default=4.0, gt=0.0)
     docker: DockerConfig = Field(default_factory=DockerConfig)
+    zakuro: ZakuroBackendConfig = Field(default_factory=ZakuroBackendConfig)
 
 
 def load_config(path: str | None = None) -> ZakuroPocConfig:

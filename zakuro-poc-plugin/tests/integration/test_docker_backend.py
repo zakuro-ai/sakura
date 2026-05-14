@@ -139,6 +139,25 @@ def test_docker_command_uses_hardening_flags(tmp_path):
     assert "--cap-drop" in cmd
     assert "ALL" in cmd
     assert "--pids-limit" in cmd
+    assert "--user" in cmd
+    user_idx = cmd.index("--user")
+    assert cmd[user_idx + 1] == "65532:65532"
+
+
+def test_docker_user_is_configurable(tmp_path):
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(
+        job_name="test-docker",
+        image="python:3.11-slim",
+        command=["python", "-c", "print('hello')"],
+    )
+    config = ZakuroPocConfig(docker={"user": "1000:1000"})
+
+    cmd = build_docker_command(plan, artifact_dir, config)
+
+    user_idx = cmd.index("--user")
+    assert cmd[user_idx + 1] == "1000:1000"
 
 
 def test_docker_command_honours_env_and_working_dir(tmp_path):
@@ -216,3 +235,21 @@ def test_docker_artifact_files_created(tmp_path):
     assert (artifact_dir / "plan.json").exists()
     assert (artifact_dir / "workspace").exists()
     assert (artifact_dir / "workspace").is_dir()
+
+
+@pytest.mark.docker
+def test_docker_non_root_user_can_write_workspace(tmp_path):
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(
+        job_name="test-docker-non-root-write",
+        image="python:3.11-slim",
+        command=["python", "-c", "open('/workspace/non-root.txt', 'w').write('ok')"],
+    )
+    config = ZakuroPocConfig()
+
+    backend = DockerBackend()
+    result = backend.run(plan, artifact_dir, config)
+
+    assert result.status == "succeeded"
+    assert (artifact_dir / "workspace" / "non-root.txt").read_text(encoding="utf-8") == "ok"

@@ -36,6 +36,8 @@ def build_docker_command(
             str(plan.resource_limits.cpu_count),
             "--memory",
             f"{plan.resource_limits.memory_mb}m",
+            "--user",
+            config.docker.user,
             "--pids-limit",
             str(config.docker.pids_limit),
             "--security-opt",

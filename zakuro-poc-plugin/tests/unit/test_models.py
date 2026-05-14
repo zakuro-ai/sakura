@@ -14,6 +14,11 @@ def test_valid_minimal_plan():
     assert plan.backend == "docker"
 
 
+def test_zakuro_backend_plan_is_valid():
+    plan = ExecutionPlan(job_name="test-zakuro", backend="zakuro", command=["echo", "hello"])
+    assert plan.backend == "zakuro"
+
+
 def test_empty_command_rejected():
     with pytest.raises(ValidationError):
         ExecutionPlan(job_name="test", image="python:3.11", command=[])

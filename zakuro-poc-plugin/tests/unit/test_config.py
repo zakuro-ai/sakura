@@ -40,6 +40,19 @@ def test_invalid_docker_network_mode_rejected():
         ZakuroPocConfig(docker={"network_mode": "host"})
 
 
+def test_docker_non_root_user_is_default():
+    config = ZakuroPocConfig()
+    assert config.docker.user == "65532:65532"
+
+
+def test_zakuro_backend_defaults_to_zc_execute():
+    config = ZakuroPocConfig()
+    assert config.zakuro.executable == "zc"
+    assert config.zakuro.execute_args == ["execute"]
+    assert config.zakuro.plan_arg == "--plan"
+    assert config.zakuro.json_arg == "--json"
+
+
 def test_missing_config_falls_back_safely(tmp_path):
     missing_path = tmp_path / "does_not_exist.json"
     config = load_config(str(missing_path))

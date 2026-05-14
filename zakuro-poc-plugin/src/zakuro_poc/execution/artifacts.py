@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from pathlib import Path
 
@@ -20,7 +21,10 @@ def create_artifact_dir(root: Path, job_id: str) -> Path:
         raise ValueError("Path traversal detected")
 
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    (artifact_dir / "workspace").mkdir(parents=True, exist_ok=True)
+    workspace_dir = artifact_dir / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(artifact_dir, 0o777)
+    os.chmod(workspace_dir, 0o777)
     return artifact_dir
 
 

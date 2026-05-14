@@ -12,6 +12,13 @@
     "remove_container": true,
     "read_only_root": false,
     "network_mode": "none",
-    "pids_limit": 256
+    "pids_limit": 256,
+    "user": "65532:65532"
+  },
+  "zakuro": {
+    "executable": "zc",
+    "execute_args": ["execute"],
+    "plan_arg": "--plan",
+    "json_arg": "--json"
   }
 }

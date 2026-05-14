@@ -2,7 +2,7 @@
 
 ## Objective
 
-Add a `ZakuroBackend` after the Docker-backed POC is stable enough to preserve the same controlled execution contract:
+Add and evolve a `ZakuroBackend` after the Docker-backed POC is stable enough to preserve the same controlled execution contract:
 
 ```text
 ExecutionPlan
@@ -32,16 +32,16 @@ The purpose is not to bypass Docker-specific safety checks with a new backend. T
 
 | Workstream | Purpose | Required Output |
 |---|---|---|
-| Backend contract audit | Confirm the current interface is sufficient for a non-Docker backend | Short design note or tests proving no Docker coupling remains |
-| Backend type model | Add `zakuro` only when the backend contract is ready | `BackendType` extension and validation tests |
-| Command mapping | Define how `ExecutionPlan` maps to `zc execute` or `zk.Compute` | Explicit mapping table and error cases |
-| Result normalisation | Convert native Zakuro/`zc` output into `ExecutionResult` | Unit tests for success, failure, timeout, and rejection |
-| Artifact preservation | Keep artifact layout identical across backends | Integration tests against a fake Zakuro backend |
+| Backend contract audit | Confirm the current interface is sufficient for a non-Docker backend | Done: fake backend contract tests cover runner and artifact invariants |
+| Backend type model | Add `zakuro` only when the backend contract is ready | Done: `BackendType` accepts `zakuro` |
+| Command mapping | Define how `ExecutionPlan` maps to `zc execute` or `zk.Compute` | Initial implementation: configurable `zc execute --plan <plan.json> --json` |
+| Result normalisation | Convert native Zakuro/`zc` output into `ExecutionResult` | Initial implementation: stdout, stderr, exit code, timeout, and missing executable are normalised |
+| Artifact preservation | Keep artifact layout identical across backends | Done for fake backend and missing-executable real backend tests |
 | Documentation | Explain when to use Docker versus Zakuro execution | README and Codex/Claude guidance updates |
 
 ## Open Questions
 
-- Is the first native backend `zk.Compute`, `zc execute`, or a thin adapter that can support both?
+- Should a later backend use `zk.Compute` directly, or should all native execution go through `zc execute`?
 - What is the stable machine-readable output contract for `zc execute`?
 - How are remote artifacts returned: copied into the local artifact directory, referenced by URI, or both?
 - How are timeouts enforced across the local CLI and the remote execution substrate?
@@ -50,12 +50,11 @@ The purpose is not to bypass Docker-specific safety checks with a new backend. T
 
 ## Recommended Sequence
 
-1. Add contract tests that assert Docker-specific behaviour stays inside `DockerBackend`.
-2. Add a fake `ZakuroBackend` in tests only, proving the runner can normalise non-Docker success and failure results.
-3. Decide whether the first real backend targets `zc execute` or `zk.Compute`.
-4. Add the real backend behind explicit config and tests.
-5. Update Claude and Codex instructions only after the backend has passing integration tests.
+1. Confirm the external `zc execute` command-line and JSON-output contract.
+2. Add live `zc` integration tests behind an explicit marker once `zc` is available in CI.
+3. Update Claude and Codex instructions only after live `zc` integration tests pass.
+4. Decide whether `zk.Compute` should be a separate backend or remain outside this plugin.
 
-## Deferral
+## Current Implementation Boundary
 
-Do not implement the real `ZakuroBackend` in the same task as broad Docker hardening. Keeping these changes separate makes safety review and regression testing more reliable.
+The current `ZakuroBackend` is a conservative subprocess adapter for `zc execute`. It does not infer success from remote metadata, copy remote artifacts, or inject credentials. Those behaviours require an explicit `zc` contract before they are added.
