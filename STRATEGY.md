@@ -3,7 +3,7 @@
 ## 1. Executive Summary
 The Zakuro project has evolved from a simple Python ML helper library (Sakura) into a sophisticated context-aware distributed-ML runtime (Zakuro) paired with an asynchronous ML training services layer (Sakura v1.0). The original commercial vision depicted a federated fog-compute marketplace, but the immediate engineering focus has successfully narrowed to delivering a robust, adaptive developer runtime that decouples ML training from blocking operations (evaluation, checkpointing) via a QUIC-backed transport and rust-based optimizations.
 
-The project is technically sound, demonstrating rigorous benchmarking and a healthy engineering culture focused on isolating and measuring distributed failure modes. The recent addition of the `zakuro-poc-plugin` establishes the first AI-agent execution boundary for Claude/Codex, but it should be treated as an implemented POC rather than a complete production component. Its intended pipeline is `Intent -> Plan -> Validation -> Consent -> Isolated Backend -> Observable Result`.
+The project is technically sound, demonstrating rigorous benchmarking and a healthy engineering culture focused on isolating and measuring distributed failure modes. The `zakuro-poc-plugin` now establishes the first AI-agent execution boundary for Claude/Codex and has been validated end to end locally, including Docker-backed execution and `100%` package coverage. It should still be treated as an implemented POC rather than a complete production component because the native `zc` contract remains an external dependency rather than an in-repo runtime. Its intended pipeline is `Intent -> Plan -> Validation -> Consent -> Isolated Backend -> Observable Result`.
 
 The main achievement is the concrete separation of the ML training layer (Sakura) from the execution substrate (Zakuro) and the initial abstraction of AI-agent execution through the new plugin. The largest remaining work lies in hardening the plugin boundary, maturing the Rust broker (`zc`), and bridging the current developer-runtime into the broader marketplace vision (billing, enterprise isolation).
 
@@ -18,7 +18,7 @@ The main achievement is the concrete separation of the ML training layer (Sakura
 - **Phase 1 (2025 - Early 2026):** Zakuro emerges as a distributed compute substrate. Experiments with Tailscale, mesh setups, and Docker worker nodes.
 - **Phase 2 (April 2026):** Strategic pivot toward adaptive allocation (`AdaptiveCompute`) and QUIC transport over HTTP. Rejection of manual routing strategies in favor of context-aware telemetry (latency drift, dead connections).
 - **Phase 3 (May 2026):** Sakura v1.0 alpha introduces `SakuraRuntime`, decoupling async eval/checkpointing using the QUIC worker transport. Strong focus on benchmark credibility (ZeRO-1 multi-rank, fp16/bf16 scaling on RTX 4090).
-- **Phase 4 (Current):** Implementation of the `zakuro-poc-plugin`. Establishing a controlled, structured execution boundary enabling LLMs to safely orchestrate compute tasks within isolated Docker backends, acting as a precursor for the Rust `zc` broker.
+- **Phase 4 (Current):** Implementation of the `zakuro-poc-plugin`. Establishing a controlled, structured execution boundary enabling LLMs to safely orchestrate compute tasks within isolated Docker backends and a conservative `zc` subprocess adapter, acting as a precursor for deeper Rust broker integration.
 
 ## 4. Completed Work
 
@@ -35,23 +35,24 @@ The main achievement is the concrete separation of the ML training layer (Sakura
 
 ### Workstream: AI Execution Plugin (`zakuro-poc-plugin`)
 - **Purpose:** Allow Claude/Codex to safely translate natural language intent into executed compute jobs.
-- **Concrete Outputs:** Pydantic schemas, explicit security policies (no raw shell, no network by default), abstract `ExecutionBackend`, isolated `DockerBackend`, Typer CLI wrapper (`validate`, `plan-show`, `execute`), and Claude `SKILL.md`.
-- **Current Status:** Implemented POC, not complete. Core non-Docker behaviour is tested; Docker, CI integration, policy enforcement, and production hardening remain active work.
+- **Concrete Outputs:** Pydantic schemas, explicit security policies (no raw shell, no network by default), abstract `ExecutionBackend`, isolated `DockerBackend`, Typer CLI wrapper (`validate`, `plan-show`, `execute`), Claude `SKILL.md`, root GitHub Actions workflow, structured artefact handling, Docker non-root defaults, a fake backend contract suite, a `ZakuroBackend` subprocess adapter for `zc execute`, and plugin-specific docs.
+- **Evidence of Completion:** Local plugin suite passes with `105 passed` and `100%` coverage for `zakuro_poc`; Docker-backed integration tests pass against a reachable daemon; lint, type-check, and diff checks pass.
+- **Current Status:** Implemented POC, complete with limitations. The plugin is functionally complete as a local execution scaffold, but it still depends on an external `zc` runtime contract for the native Zakuro path.
 
 ## 5. Current State
 - **Zakuro Runtime:** In progress.
 - **Sakura Services:** In progress.
-- **Zakuro POC Plugin:** Implemented POC, requires hardening.
+- **Zakuro POC Plugin:** Implemented POC, locally validated, complete with limitations.
 - **Rust Broker (`zc`):** Partially implemented / External dependency.
 - **Federated Marketplace / Billing:** Deferred.
 
 ## 6. Remaining Work
-- **Transition POC Plugin to Zakuro Backend:** 
-  - *What:* After hardening the Docker-backed POC, add a `ZakuroBackend` abstraction that can use `zk.Compute` or `zc execute`.
-  - *Why:* To integrate the AI agent workflow into the native Zakuro distributed mesh without weakening the current structured plan, validation, consent, and artifact contract.
 - **Mature the Rust Broker (`zc`):**
   - *What:* Finalize the high-performance Rust control plane.
   - *Why:* Required to scale beyond local clusters and hit the 10-50K RPS targets for the federated mesh.
+- **Evolve the Plugin Backend Contract:**
+  - *What:* Replace the current subprocess adapter with a deeper native integration once the Rust broker contract is stable and observable.
+  - *Why:* The current plugin already executes safely, but its native Zakuro path still depends on an external executable contract.
 - **Marketplace & Billing Infrastructure:**
   - *What:* Re-introduce enterprise billing, PostgreSQL ledgers, and SLA compliance models.
   - *Why:* Necessary to realize the ultimate commercial vision outlined in the investor memo.
@@ -68,14 +69,14 @@ The main achievement is the concrete separation of the ML training layer (Sakura
 |------------|----------------|----------|----------------|------------|-------------------------|
 | **Sakura Services** | In Progress (v1.0a1) | Reproducible bench harness, NCCL correctness tests | Stream-based GPU dispatchers, expanded multi-task workloads | Medium | Finalize v1.0.0 release. |
 | **Zakuro Runtime** | In Progress (v0.3) | `AdaptiveCompute` drift detection and QUIC transport implemented | Transition from standalone clusters to Rust broker mesh | Low | Stabilize worker API and QUIC reliability. |
-| **Zakuro POC Plugin** | Implemented POC | Structured models, CLI, Docker backend, Claude/Codex guidance, focused tests | Harden policy enforcement, artifact semantics, Docker isolation, and CI before adding Zakuro backend | Medium | Complete plugin hardening before connecting to live Zakuro cluster. |
+| **Zakuro POC Plugin** | Implemented POC, complete with limitations | Structured models, CLI, Docker backend, Claude/Codex guidance, root CI, fake backend contract tests, `ZakuroBackend` adapter, `100%` local coverage | Replace subprocess-based native backend with deeper `zc` integration once the broker contract is stable | Medium | Stabilise the `zc` contract and decide whether a native backend API is worth the complexity. |
 | **Federated Marketplace** | Deferred | Mentioned in PRD/Memos, lack of active ledger codebase | Billing, identity, SLA enforcement, Dashboard | High | Keep deferred until runtime adoption is proven. |
 
 ## 9. Recommended Next Steps
-- **Immediate:** Finish hardening the `zakuro-poc-plugin` POC: validation-before-consent, config policy enforcement, complete artifact semantics, root CI integration, and conservative Docker isolation.
+- **Immediate:** Preserve the plugin’s current `100%` coverage and Docker validation, and keep the current execution contract stable.
 - **Short-Term:** Solidify `sakura`'s GPU asynchronous dispatch mechanisms to prevent blocking on heavily GPU-bound evaluation workloads.
-- **Medium-Term:** Mature the `zc` Rust broker and transition the orchestration layer off Python `subprocess` into native Rust mesh management.
+- **Medium-Term:** Mature the `zc` Rust broker and decide whether the subprocess-based plugin backend should be replaced with a native integration or retained as the stable contract boundary.
 - **Deferred:** Enterprise marketplace billing and provider liquidity generation.
 
 ## 10. Final Assessment
-The project is on track and making strong technical decisions by narrowing its focus from a broad marketplace concept to a measurable distributed ML runtime. The largest gap is the still-hardening AI execution boundary between agent intent and backend execution. The largest risk is maintaining focus across too many supported ML frameworks while also securing Python serialization and container execution boundaries. The immediate next step is to complete the plugin hardening work, then add a `ZakuroBackend` / `zc execute` path once the Docker-backed POC is no longer carrying unresolved safety gaps.
+The project is on track and making strong technical decisions by narrowing its focus from a broad marketplace concept to a measurable distributed ML runtime. The largest gap is now strategic rather than local: deciding how far to take the `zc` / native Zakuro integration beyond the already working subprocess-backed plugin. The largest risk remains maintaining focus across too many supported ML frameworks while also securing Python serialization and container execution boundaries. The immediate next step is to preserve the current plugin contract, monitor the native broker interface, and avoid expanding scope before the `zc` path stabilises further.
