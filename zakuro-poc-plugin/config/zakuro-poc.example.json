@@ -11,6 +11,7 @@
   "docker": {
     "remove_container": true,
     "read_only_root": false,
-    "network_mode": "none"
+    "network_mode": "none",
+    "pids_limit": 256
   }
 }

@@ -80,6 +80,29 @@ def test_execute_without_yes_aborts(tmp_path):
     assert "Execution aborted" in result.stdout
 
 
+def test_execute_rejects_invalid_plan_before_prompt(tmp_path):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "job_name": "test",
+                "backend": "noop",
+                "image": "python:3.11",
+                "command": ["bash", "-c", "ls"],
+            }
+        )
+    )
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"artifact_root": str(tmp_path)}))
+
+    result = runner.invoke(app, ["execute", "--plan", str(plan_path), "--config", str(config_path)])
+
+    assert result.exit_code == 2
+    assert "Validation rejected" in result.stdout
+    assert "Type 'yes' to execute" not in result.stdout
+    assert "Status: rejected" in result.stdout
+
+
 def test_doctor_returns_useful_output():
     result = runner.invoke(app, ["doctor"])
     assert "Python >= 3.11" in result.stdout

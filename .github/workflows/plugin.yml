@@ -1,14 +1,24 @@
-name: CI
+name: plugin
 
 on:
   pull_request:
+    paths:
+      - "zakuro-poc-plugin/**"
+      - ".github/workflows/plugin.yml"
   push:
     branches:
-      - main
+      - master
+      - plugin
+    paths:
+      - "zakuro-poc-plugin/**"
+      - ".github/workflows/plugin.yml"
 
 jobs:
   python-checks:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zakuro-poc-plugin
 
     steps:
       - name: Checkout
@@ -43,6 +53,9 @@ jobs:
 
   docker-smoke:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zakuro-poc-plugin
 
     steps:
       - name: Checkout

@@ -24,8 +24,13 @@ def test_invalid_plan_rejected_by_policy(tmp_path):
     config = ZakuroPocConfig(artifact_root=str(tmp_path))
     # This plan uses bash, which is rejected by security policy
     plan = ExecutionPlan(job_name="test", backend="noop", command=["bash", "-c", "ls"])
-    with pytest.raises(ValueError, match="Security policy violations"):
-        execute_plan(plan, config)
+    result = execute_plan(plan, config)
+
+    assert result.status == "rejected"
+    assert result.exit_code is None
+    assert "Security policy violations" in (result.error_message or "")
+    assert (tmp_path / result.job_id / "result.json").exists()
+    assert (tmp_path / result.job_id / "stderr.txt").exists()
 
 
 def test_unknown_backend_rejected(tmp_path):
@@ -33,8 +38,10 @@ def test_unknown_backend_rejected(tmp_path):
     plan = ExecutionPlan(job_name="test", command=["ls"])
     # Bypass pydantic validation for testing the runner's exception
     plan.backend = "unknown"
-    with pytest.raises(ValueError, match="Unknown backend: unknown"):
-        execute_plan(plan, config)
+    result = execute_plan(plan, config)
+
+    assert result.status == "rejected"
+    assert result.error_message == "Unknown backend: unknown"
 
 
 def test_artifacts_are_written(tmp_path):
@@ -45,6 +52,10 @@ def test_artifacts_are_written(tmp_path):
     artifact_dir = tmp_path / result.job_id
     assert (artifact_dir / "plan.json").exists()
     assert (artifact_dir / "result.json").exists()
+    assert (artifact_dir / "stdout.txt").exists()
+    assert (artifact_dir / "stderr.txt").exists()
+    assert (artifact_dir / "metadata.json").exists()
+    assert (artifact_dir / "workspace").is_dir()
 
 
 def test_result_contains_job_id(tmp_path):

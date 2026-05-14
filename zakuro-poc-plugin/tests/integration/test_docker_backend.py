@@ -122,6 +122,79 @@ def test_memory_and_cpu_flags_are_present(tmp_path):
     assert cmd[mem_idx + 1] == "1024m"
 
 
+def test_docker_command_uses_hardening_flags(tmp_path):
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(
+        job_name="test-docker",
+        image="python:3.11-slim",
+        command=["python", "-c", "print('hello')"],
+    )
+    config = ZakuroPocConfig()
+
+    cmd = build_docker_command(plan, artifact_dir, config)
+
+    assert "--security-opt" in cmd
+    assert "no-new-privileges" in cmd
+    assert "--cap-drop" in cmd
+    assert "ALL" in cmd
+    assert "--pids-limit" in cmd
+
+
+def test_docker_command_honours_env_and_working_dir(tmp_path):
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(
+        job_name="test-docker",
+        image="python:3.11-slim",
+        command=["python", "-c", "print('hello')"],
+        env={"SAKURA_MODE": "test"},
+        working_dir="repo",
+    )
+    config = ZakuroPocConfig()
+
+    cmd = build_docker_command(plan, artifact_dir, config)
+
+    assert "--env" in cmd
+    assert "SAKURA_MODE=test" in cmd
+    workdir_idx = cmd.index("-w")
+    assert cmd[workdir_idx + 1] == "/workspace/repo"
+
+
+def test_read_only_root_flag_is_configurable(tmp_path):
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(
+        job_name="test-docker",
+        image="python:3.11-slim",
+        command=["python", "-c", "print('hello')"],
+    )
+    config = ZakuroPocConfig(docker={"read_only_root": True})
+
+    cmd = build_docker_command(plan, artifact_dir, config)
+
+    assert "--read-only" in cmd
+    assert "--tmpfs" in cmd
+
+
+def test_network_mode_uses_config_when_network_is_allowed(tmp_path):
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(
+        job_name="test-docker",
+        image="python:3.11-slim",
+        command=["python", "-c", "print('hello')"],
+        repo_url="https://github.com/octocat/Hello-World.git",
+        network_enabled=True,
+    )
+    config = ZakuroPocConfig(allow_network=True, docker={"network_mode": "bridge"})
+
+    cmd = build_docker_command(plan, artifact_dir, config)
+
+    network_idx = cmd.index("--network")
+    assert cmd[network_idx + 1] == "bridge"
+
+
 @pytest.mark.docker
 def test_docker_artifact_files_created(tmp_path):
     job_id = new_job_id()

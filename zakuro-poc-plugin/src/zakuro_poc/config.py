@@ -9,6 +9,7 @@ class DockerConfig(BaseModel):
     remove_container: bool = True
     read_only_root: bool = False
     network_mode: Literal["none", "bridge"] = "none"
+    pids_limit: int = Field(default=256, ge=1)
 
 
 class ZakuroPocConfig(BaseModel):
