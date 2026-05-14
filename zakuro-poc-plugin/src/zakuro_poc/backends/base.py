@@ -10,4 +10,4 @@ class ExecutionBackend(ABC):
     def run(
         self, plan: ExecutionPlan, artifact_dir: Path, config: ZakuroPocConfig
     ) -> ExecutionResult:
-        pass
+        pass  # pragma: no cover

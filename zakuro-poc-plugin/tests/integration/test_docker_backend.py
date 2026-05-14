@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 
 from zakuro_poc.backends.docker_backend import DockerBackend, build_docker_command
@@ -144,6 +146,17 @@ def test_docker_command_uses_hardening_flags(tmp_path):
     assert cmd[user_idx + 1] == "65532:65532"
 
 
+def test_docker_available_returns_false_when_cli_is_missing(monkeypatch):
+    from zakuro_poc.backends import docker_backend
+
+    def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN202
+        raise FileNotFoundError("docker")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert docker_backend.docker_available() is False
+
+
 def test_docker_user_is_configurable(tmp_path):
     job_id = new_job_id()
     artifact_dir = create_artifact_dir(tmp_path, job_id)
@@ -212,6 +225,42 @@ def test_network_mode_uses_config_when_network_is_allowed(tmp_path):
 
     network_idx = cmd.index("--network")
     assert cmd[network_idx + 1] == "bridge"
+
+
+def test_docker_backend_reports_unavailable_docker(tmp_path, monkeypatch):
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(job_name="test-docker-missing", image="python:3.11-slim", command=["ls"])
+    config = ZakuroPocConfig()
+
+    monkeypatch.setattr("zakuro_poc.backends.docker_backend.docker_available", lambda: False)
+
+    result = DockerBackend().run(plan, artifact_dir, config)
+
+    assert result.status == "failed"
+    assert result.exit_code is None
+    assert "Docker is not available" in result.stderr
+    assert (artifact_dir / "result.json").exists()
+
+
+def test_docker_backend_normalises_unexpected_errors(tmp_path, monkeypatch):
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(job_name="test-docker-error", image="python:3.11-slim", command=["ls"])
+    config = ZakuroPocConfig()
+
+    monkeypatch.setattr("zakuro_poc.backends.docker_backend.docker_available", lambda: True)
+
+    def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN202
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = DockerBackend().run(plan, artifact_dir, config)
+
+    assert result.status == "failed"
+    assert "Failed to execute docker command" in result.stderr
+    assert result.error_message == "boom"
 
 
 @pytest.mark.docker

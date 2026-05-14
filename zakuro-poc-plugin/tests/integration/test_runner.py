@@ -1,8 +1,9 @@
 import pytest
 from pydantic import ValidationError
 
+from zakuro_poc.backends.docker_backend import DockerBackend
 from zakuro_poc.config import ZakuroPocConfig
-from zakuro_poc.execution.runner import execute_plan
+from zakuro_poc.execution.runner import default_backend_factory, execute_plan
 from zakuro_poc.models import ExecutionPlan
 
 
@@ -70,3 +71,8 @@ def test_duration_is_non_negative(tmp_path):
     plan = ExecutionPlan(job_name="test", backend="noop", command=["ls"])
     result = execute_plan(plan, config)
     assert result.duration_ms >= 0
+
+
+def test_default_backend_factory_returns_docker_backend():
+    backend = default_backend_factory("docker")
+    assert isinstance(backend, DockerBackend)

@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from zakuro_poc.config import ZakuroPocConfig
-from zakuro_poc.models import ExecutionPlan
+from zakuro_poc.models import ExecutionPlan, ResourceLimits
 from zakuro_poc.security.policy import validate_security_policy
 from zakuro_poc.validation import validate_plan_or_raise
 
@@ -112,3 +112,43 @@ def test_working_dir_must_be_relative_under_workspace():
 
     assert any("working_dir" in v for v in validate_security_policy(absolute))
     assert any("working_dir" in v for v in validate_security_policy(traversal))
+
+
+def test_security_policy_rejects_empty_command_via_construct():
+    plan = ExecutionPlan.model_construct(
+        job_name="empty",
+        backend="docker",
+        image="python:3.11-slim",
+        command=[],
+        working_dir=None,
+        repo_url=None,
+        env={},
+        resource_limits=ResourceLimits(),
+        artifact_dir=None,
+        network_enabled=False,
+        created_by="claude-code",
+    )
+
+    violations = validate_security_policy(plan)
+
+    assert "empty command" in violations
+
+
+def test_security_policy_rejects_non_https_repo_via_construct():
+    plan = ExecutionPlan.model_construct(
+        job_name="repo",
+        backend="docker",
+        image="python:3.11-slim",
+        command=["ls"],
+        working_dir=None,
+        repo_url="http://example.com/repo.git",
+        env={},
+        resource_limits=ResourceLimits(),
+        artifact_dir=None,
+        network_enabled=False,
+        created_by="claude-code",
+    )
+
+    violations = validate_security_policy(plan)
+
+    assert "non-HTTPS repo_url" in violations
