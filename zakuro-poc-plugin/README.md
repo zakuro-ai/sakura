@@ -69,8 +69,18 @@ Run `./scripts/check.sh`.
 ## Testing
 Run `./scripts/test.sh`.
 
+Latest local validation, run on 2026-05-14:
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv pip install -e ".[dev]"
+.venv/bin/pytest -m "not docker"
+.venv/bin/pytest -m docker tests/integration/test_docker_backend.py
+```
+
+The Docker smoke suite requires access to the host Docker socket. In sandboxed agent sessions, Docker commands may require explicit approval even when Docker Desktop is already running.
+
 ## Troubleshooting
 Check Docker daemon.
 
 ## Roadmap: Replacing Docker with `zc execute`
-Future updates will transition the backend to `zc execute`.
+Future updates should add a `ZakuroBackend` only after the current plan, validation, consent, result, and artifact semantics are preserved. See `docs/ZAKURO_BACKEND_PLAN.md`.
