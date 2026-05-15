@@ -127,6 +127,45 @@ def test_zakuro_backend_reports_unexpected_exception(monkeypatch, tmp_path):
     assert result.error_message == "kaboom"
 
 
+def test_zakuro_backend_reports_segmentation_fault(monkeypatch, tmp_path):
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(job_name="test-zakuro-segfault", backend="zakuro", command=["echo", "hello"])
+    write_text_artifact(artifact_dir, "plan.json", plan.model_dump_json(indent=2))
+    config = ZakuroPocConfig()
+
+    def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN202
+        return subprocess.CompletedProcess(args=["zc"], returncode=-11, stdout="", stderr="Segmentation fault (core dumped)")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = ZakuroBackend().run(plan, artifact_dir, config)
+
+    assert result.status == "failed"
+    assert result.exit_code == -11
+    assert result.error_message == "zc execute returned a non-zero exit code"
+    assert "Segmentation fault" in result.stderr
+
+
+def test_zakuro_backend_handles_malformed_json_output(monkeypatch, tmp_path):
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(job_name="test-zakuro-badjson", backend="zakuro", command=["echo", "hello"])
+    write_text_artifact(artifact_dir, "plan.json", plan.model_dump_json(indent=2))
+    config = ZakuroPocConfig()
+
+    def fake_run(*_args, **_kwargs):  # noqa: ANN001, ANN202
+        return subprocess.CompletedProcess(args=["zc"], returncode=0, stdout='{"incomplete": true', stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = ZakuroBackend().run(plan, artifact_dir, config)
+
+    # Currently it just passes through stdout without parsing it
+    assert result.status == "succeeded"
+    assert result.stdout == '{"incomplete": true'
+    assert result.exit_code == 0
+
 def test_real_zakuro_backend_is_selected_by_runner(tmp_path):
     from zakuro_poc.execution.runner import execute_plan
 

@@ -20,9 +20,13 @@ def create_artifact_dir(root: Path, job_id: str) -> Path:
     if not artifact_dir.resolve().is_relative_to(root.resolve()):  # pragma: no cover
         raise ValueError("Path traversal detected")
 
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    workspace_dir = artifact_dir / "workspace"
-    workspace_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        artifact_dir.mkdir(parents=False, exist_ok=False)
+        workspace_dir = artifact_dir / "workspace"
+        workspace_dir.mkdir(parents=False, exist_ok=False)
+    except FileExistsError:
+        raise RuntimeError(f"Artifact directory collision for job {job_id}") from None
+
     os.chmod(artifact_dir, 0o777)
     os.chmod(workspace_dir, 0o777)
     return artifact_dir

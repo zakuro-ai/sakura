@@ -37,7 +37,13 @@ Use this skill when the user asks to run an isolated compute job through the Zak
 
    `zakuro-poc execute --plan <plan.json> --yes`
 
-8. Summarise:
+8. Check the execution status. If the status is `rejected`:
+   - This means the plan violated the security policy or validation rules.
+   - Read the error message to understand the violation.
+   - Do **not** attempt to bypass the CLI.
+   - Generate a new, compliant plan and repeat from step 4.
+
+9. If the job succeeds, fails normally, or times out, summarise:
 
    - job id;
    - status;

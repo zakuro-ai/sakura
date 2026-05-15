@@ -20,7 +20,13 @@ Use this workflow:
 
    `zakuro-poc execute --plan tmp/plan.json --yes`
 
-7. Report:
+7. Handle Rejections:
+   If the execution status is `rejected` (exit code 2):
+   - The plan violated the security policy.
+   - Do not attempt to bypass the plugin.
+   - Read the validation errors, update the plan to be compliant, and try again.
+
+8. Report:
 
    - job id;
    - status;
