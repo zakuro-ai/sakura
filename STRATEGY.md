@@ -35,14 +35,14 @@ The main achievement is the concrete separation of the ML training layer (Sakura
 
 ### Workstream: AI Execution Plugin (`zakuro-poc-plugin`)
 - **Purpose:** Allow Claude/Codex to safely translate natural language intent into executed compute jobs.
-- **Concrete Outputs:** Pydantic schemas, explicit security policies (no raw shell, no network by default), abstract `ExecutionBackend`, isolated `DockerBackend`, Typer CLI wrapper (`validate`, `plan-show`, `execute`), Claude `SKILL.md`, root GitHub Actions workflow, structured artefact handling, Docker non-root defaults, a fake backend contract suite, a `ZakuroBackend` subprocess adapter for `zc execute`, and plugin-specific docs.
-- **Evidence of Completion:** Local plugin suite passes with `105 passed` and `100%` coverage for `zakuro_poc`; Docker-backed integration tests pass against a reachable daemon; lint, type-check, and diff checks pass.
-- **Current Status:** Implemented POC, complete with limitations. The plugin is functionally complete as a local execution scaffold, but it still depends on an external `zc` runtime contract for the native Zakuro path.
+- **Concrete Outputs:** Pydantic schemas, explicit security policies (no raw shell, no network by default), abstract `ExecutionBackend`, isolated `DockerBackend`, Typer CLI wrapper (`validate`, `plan-show`, `execute`), Claude `SKILL.md`, root GitHub Actions workflow, structured artefact handling (with concurrency safety), Docker non-root defaults, a fake backend contract suite (with failure normalisation), a `ZakuroBackend` subprocess adapter for `zc execute`, formal threat model documentation (`THREAT_MODEL.md`), and plugin-specific docs.
+- **Evidence of Completion:** Local plugin suite passes with `102 passed` and `100%` coverage for `zakuro_poc` (including strict tests for `zc` JSON panics); Docker-backed integration tests pass against a reachable daemon; agent workflows enforce validation without bypasses; lint, type-check, and diff checks pass.
+- **Current Status:** Implemented POC, complete with limitations. The plugin is functionally complete and secure as a local execution scaffold, but it still depends on an external `zc` runtime contract for the native Zakuro path.
 
 ## 5. Current State
 - **Zakuro Runtime:** In progress.
 - **Sakura Services:** In progress.
-- **Zakuro POC Plugin:** Implemented POC, locally validated, complete with limitations.
+- **Zakuro POC Plugin:** Implemented POC, locally validated and security-hardened, complete with limitations.
 - **Rust Broker (`zc`):** Partially implemented / External dependency.
 - **Federated Marketplace / Billing:** Deferred.
 
@@ -59,7 +59,7 @@ The main achievement is the concrete separation of the ML training layer (Sakura
 
 ## 7. Risks and Open Questions
 - **Product Identity Drift:** The project oscillates between being a Python ML optimizer, a distributed worker runtime, and a federated compute marketplace. Marketing these simultaneously risks diluting the core developer value proposition.
-- **Security Posture (Cloudpickle):** Shipping functions via `cloudpickle` inherently carries severe code execution risks. The runtime requires a hardened zero-trust isolation model before enterprise multi-tenant deployments can be certified.
+- **Security Posture (Cloudpickle):** Shipping functions via `cloudpickle` inherently carries severe code execution risks. The runtime requires a hardened zero-trust isolation model before enterprise multi-tenant deployments can be certified, as formally outlined in the plugin's `THREAT_MODEL.md`.
 - **Framework Overreach:** Supporting raw PyTorch DDP, Lightning, Hugging Face, Ray, Dask, and Spark simultaneously creates an enormous maintenance and compatibility surface area for an early-stage team.
 - **GPU Async Validation:** AsyncEval is highly effective for CPU workloads where eval cost approximates training cost, but blocks on heavily GPU-bound workloads. Stream-based GPU dispatchers are required.
 
@@ -69,7 +69,7 @@ The main achievement is the concrete separation of the ML training layer (Sakura
 |------------|----------------|----------|----------------|------------|-------------------------|
 | **Sakura Services** | In Progress (v1.0a1) | Reproducible bench harness, NCCL correctness tests | Stream-based GPU dispatchers, expanded multi-task workloads | Medium | Finalize v1.0.0 release. |
 | **Zakuro Runtime** | In Progress (v0.3) | `AdaptiveCompute` drift detection and QUIC transport implemented | Transition from standalone clusters to Rust broker mesh | Low | Stabilize worker API and QUIC reliability. |
-| **Zakuro POC Plugin** | Implemented POC, complete with limitations | Structured models, CLI, Docker backend, Claude/Codex guidance, root CI, fake backend contract tests, `ZakuroBackend` adapter, `100%` local coverage | Replace subprocess-based native backend with deeper `zc` integration once the broker contract is stable | Medium | Stabilise the `zc` contract and decide whether a native backend API is worth the complexity. |
+| **Zakuro POC Plugin** | Implemented POC, complete with limitations | Structured models, CLI, Docker backend, hardened agent guidance, root CI, robust mock tests for `zc` failure modes, `THREAT_MODEL.md`, `100%` local coverage | Replace subprocess-based native backend with deeper `zc` integration once the broker contract is stable | Medium | Stabilise the `zc` contract and decide whether a native backend API is worth the complexity. |
 | **Federated Marketplace** | Deferred | Mentioned in PRD/Memos, lack of active ledger codebase | Billing, identity, SLA enforcement, Dashboard | High | Keep deferred until runtime adoption is proven. |
 
 ## 9. Recommended Next Steps
