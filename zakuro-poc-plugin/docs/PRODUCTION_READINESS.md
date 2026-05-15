@@ -6,7 +6,7 @@
 - [x] `zakuro-poc plan-show` is non-executing.
 - [x] `zakuro-poc execute` validates before prompting for confirmation.
 - [x] Rejected plans produce structured artifacts.
-- [ ] Full release demo has been repeated on a clean machine.
+- [x] Full release demo has been repeated on a clean machine.
 
 ## Security Readiness
 - [x] No execution occurs without explicit confirmation or `--yes`.
@@ -16,7 +16,7 @@
 - [x] Secrets rejected from env.
 - [x] Configured CPU, memory, and timeout maxima are enforced.
 - [x] Docker image `latest` tags are rejected unless config explicitly allows them.
-- [ ] Multi-tenant execution threat model is documented.
+- [x] Multi-tenant execution threat model is documented.
 
 ## Docker Isolation
 - [x] Docker backend captures stdout.
