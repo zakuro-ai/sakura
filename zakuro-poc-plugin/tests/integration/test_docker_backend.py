@@ -306,6 +306,7 @@ def test_docker_non_root_user_can_write_workspace(tmp_path):
 
 def test_docker_backend_mock_success(tmp_path, monkeypatch):
     import subprocess
+
     job_id = new_job_id()
     artifact_dir = create_artifact_dir(tmp_path, job_id)
     plan = ExecutionPlan(
@@ -320,7 +321,9 @@ def test_docker_backend_mock_success(tmp_path, monkeypatch):
     def fake_run(*args, **kwargs):
         if args[0][1] == "rm":
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
-        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="mock stdout", stderr="mock stderr")
+        return subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout="mock stdout", stderr="mock stderr"
+        )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -335,6 +338,7 @@ def test_docker_backend_mock_success(tmp_path, monkeypatch):
 
 def test_docker_backend_mock_timeout_bytes(tmp_path, monkeypatch):
     import subprocess
+
     job_id = new_job_id()
     artifact_dir = create_artifact_dir(tmp_path, job_id)
     plan = ExecutionPlan(
@@ -351,10 +355,7 @@ def test_docker_backend_mock_timeout_bytes(tmp_path, monkeypatch):
         if args[0][1] == "rm":
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
         raise subprocess.TimeoutExpired(
-            cmd=args[0],
-            timeout=1,
-            output=b"bytes stdout",
-            stderr=b"bytes stderr"
+            cmd=args[0], timeout=1, output=b"bytes stdout", stderr=b"bytes stderr"
         )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
