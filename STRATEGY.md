@@ -43,7 +43,7 @@ The main achievement is the concrete separation of the ML training layer (Sakura
 - **Zakuro Runtime:** In progress.
 - **Sakura Services:** In progress.
 - **Zakuro POC Plugin:** Production Ready (v1.0.0), locally validated and security-hardened.
-- **Rust Broker (`zc`):** Partially implemented / External dependency.
+- **Rust Broker (`zc`):** Functionally hardened for local execution (`crates/zc`).
 - **Federated Marketplace / Billing:** Deferred.
 
 ## 6. Remaining Work
@@ -70,7 +70,7 @@ The main achievement is the concrete separation of the ML training layer (Sakura
 | **Sakura Services** | In Progress (v1.0a1) | Reproducible bench harness, NCCL correctness tests | Stream-based GPU dispatchers, expanded multi-task workloads | Medium | Finalize v1.0.0 release. |
 | **Zakuro Runtime** | In Progress (v0.3) | `AdaptiveCompute` drift detection and QUIC transport implemented | Transition from standalone clusters to Rust broker mesh | Low | Stabilize worker API and QUIC reliability. |
 | **Zakuro POC Plugin** | Production Ready (v1.0.0) | Structured models, CLI, Docker backend, hardened agent guidance, root CI, robust mock tests for `zc` failure modes, `THREAT_MODEL.md`, `100%` local coverage, strict `bandit`/`pip-audit` gates | Replace subprocess-based native backend with deeper `zc` integration once the broker contract is stable | Low | Stabilise the `zc` contract and decide whether a native backend API is worth the complexity. |
-| **Rust Broker (`zc`)** | API contract stub implemented | `crates/zc` CLI accepts `--plan` and `--json`, deserializes `ExecutionPlan`, outputs `ExecutionResult` | Implement the actual compute routing mesh and execution isolation behind the CLI contract | High | Proceed with implementing the actual `zc` execution engine while keeping the CLI contract immutable. |
+| **Rust Broker (`zc`)** | Functionally hardened | `crates/zc` CLI supports real `tokio` process execution, output redirection, timeout enforcement, and artifact persistence. | Implement the actual compute routing mesh and execution isolation (sandboxing) | High | Evolve the local executor into a distributed mesh broker while maintaining the stable CLI contract. |
 
 ## 9. Recommended Next Steps
 - **Immediate:** Preserve the plugin’s current `100%` coverage and Docker validation, and keep the current execution contract stable.
@@ -93,4 +93,5 @@ The project is on track and making strong technical decisions by narrowing its f
 | 2026-05-16 | `pyproject.toml` | Injected `[tool.bandit]` section skipping `B108`, `B404`, `B603`, `B607`. | Exclude false-positive subprocess execution warnings on statically formed, immutable command lists ensuring no untrusted string shells are executed. | **Passed:** `bandit` audit clean. |
 | 2026-05-16 | `docs/PRODUCTION_READINESS.md` | Marked remote CI validation boxes and updated test counts to 106 and coverage to 100%. | Accurately reflect DevSecOps compliance and functional readiness. | **Passed:** Manual review. |
 | 2026-05-16 | `STRATEGY.md` | Formalised status transition from "Implemented POC" to "Production Ready (v1.0.0)". Created the Scrupulous Change Log table. | Fulfil mandate to exactingly track strategy and implementation states. | **Passed:** Manual review. |
-abilise the external Rust broker API contract to unblock the `zakuro-poc-plugin`'s native execution path. | **Passed:** `cargo run -- execute` returns correct JSON structure against example plans. |
+| 2026-05-16 | `crates/zc` | Created the `zc` Rust crate. Implemented the strict `zc execute --plan <path> --json` API contract stub using `clap` and `serde`. | Stabilise the external Rust broker API contract to unblock the `zakuro-poc-plugin`'s native execution path. | **Passed:** `cargo run -- execute` returns correct JSON structure against example plans. |
+| 2026-05-16 | `crates/zc` | Hardened `zc` with real `tokio::process::Command` execution, timeout logic, and artifact persistence. | Transition from a contract stub to a functional local execution engine. | **Passed:** Real execution, output capture, and artifact creation verified. |
