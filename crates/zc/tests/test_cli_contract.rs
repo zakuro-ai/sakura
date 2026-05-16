@@ -19,7 +19,7 @@ fn test_zc_execute_echo_success() {
     fs::write(plan_path, plan_json).unwrap();
 
     let output = Command::new("cargo")
-        .args(&["run", "--", "execute", "--plan", plan_path, "--json"])
+        .args(["run", "--", "execute", "--plan", plan_path, "--json"])
         .output()
         .expect("failed to execute process");
 
