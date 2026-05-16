@@ -318,7 +318,7 @@ def test_docker_backend_mock_success(tmp_path, monkeypatch):
 
     monkeypatch.setattr("zakuro_poc.backends.docker_backend.docker_available", lambda: True)
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args, **_kwargs):
         if args[0][1] == "rm":
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
         return subprocess.CompletedProcess(
@@ -351,7 +351,7 @@ def test_docker_backend_mock_timeout_bytes(tmp_path, monkeypatch):
 
     monkeypatch.setattr("zakuro_poc.backends.docker_backend.docker_available", lambda: True)
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args, **_kwargs):
         if args[0][1] == "rm":
             return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
         raise subprocess.TimeoutExpired(
