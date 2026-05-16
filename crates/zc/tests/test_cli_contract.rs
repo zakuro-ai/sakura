@@ -6,7 +6,7 @@ use tempfile::tempdir;
 fn test_zc_execute_echo_success() {
     let tmp = tempdir().expect("Failed to create temp dir");
     let plan_path = tmp.path().join("plan.json");
-    
+
     let plan_json = r#"{
         "job_name": "test-echo",
         "backend": "zakuro",
@@ -27,7 +27,16 @@ fn test_zc_execute_echo_success() {
     // Use the current executable's path to find the `zc` binary or just run the relative command
     // from the project root. Since cargo is needed, let's execute `cargo run` from the project root.
     let output = Command::new("cargo")
-        .args(["run", "-p", "zc", "--", "execute", "--plan", absolute_plan_path.to_str().unwrap(), "--json"])
+        .args([
+            "run",
+            "-p",
+            "zc",
+            "--",
+            "execute",
+            "--plan",
+            absolute_plan_path.to_str().unwrap(),
+            "--json",
+        ])
         .output()
         .expect("failed to execute process");
 
@@ -43,5 +52,8 @@ fn test_zc_execute_echo_success() {
 
     // Verify that the zakuro-artifacts directory is cleaned up
     let artifact_root = tmp.path().join("zakuro-artifacts");
-    assert!(!artifact_root.exists(), "Artifacts directory should be cleaned up after execution");
+    assert!(
+        !artifact_root.exists(),
+        "Artifacts directory should be cleaned up after execution"
+    );
 }

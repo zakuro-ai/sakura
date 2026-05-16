@@ -85,8 +85,10 @@ async fn main() -> Result<()> {
                 let mut stderr_data_raw = Vec::new();
 
                 let wait_handle = child.wait();
-                let stdout_handle = tokio::io::AsyncReadExt::read_to_end(&mut stdout, &mut stdout_data_raw);
-                let stderr_handle = tokio::io::AsyncReadExt::read_to_end(&mut stderr, &mut stderr_data_raw);
+                let stdout_handle =
+                    tokio::io::AsyncReadExt::read_to_end(&mut stdout, &mut stdout_data_raw);
+                let stderr_handle =
+                    tokio::io::AsyncReadExt::read_to_end(&mut stderr, &mut stderr_data_raw);
 
                 tokio::select! {
                     res = wait_handle => {
@@ -159,7 +161,8 @@ async fn main() -> Result<()> {
 
             // Hardened cleanup: Explicitly remove the artifact directory and verify its removal
             if artifact_dir_path.exists() {
-                fs::remove_dir_all(&artifact_dir_path).context("Critical: Failed to clean up artifact directory")?;
+                fs::remove_dir_all(&artifact_dir_path)
+                    .context("Critical: Failed to clean up artifact directory")?;
                 if artifact_dir_path.exists() {
                     return Err(anyhow::anyhow!("Critical: Workspace cleanup failed audit"));
                 }
