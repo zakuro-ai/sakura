@@ -23,7 +23,7 @@ half = { version = "2.4", default-features = false, features = ["std", "num-trai
 thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
 tempfile = "3.10"
 
 [profile.release]
