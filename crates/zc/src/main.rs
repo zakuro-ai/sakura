@@ -27,11 +27,11 @@ async fn main() -> Result<()> {
 
             let started_at = Utc::now();
             let job_id = format!("job-{}", started_at.format("%Y%m%d-%H%M%S-%f"));
-            
+
             // Determine artifact directory
             let artifact_root = "zakuro-artifacts";
             let artifact_dir_path = artifacts::prepare_artifact_dir(artifact_root, &job_id)?;
-            
+
             // Save the plan to the artifact directory as required by the plugin
             fs::copy(&plan_path, artifact_dir_path.join("plan.json"))
                 .context("Failed to copy plan.json to artifact directory")?;
@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
 
                 cmd.stdout(Stdio::piped());
                 cmd.stderr(Stdio::piped());
-                
+
                 if let Some(ref work_dir) = execution_plan.working_dir {
                     let workspace = artifact_dir_path.join("workspace");
                     let full_work_dir = workspace.join(work_dir);
@@ -67,7 +67,8 @@ async fn main() -> Result<()> {
                     cmd.envs(env_vars);
                 }
 
-                let timeout_duration = Duration::from_secs(execution_plan.resource_limits.timeout_seconds as u64);
+                let timeout_duration =
+                    Duration::from_secs(execution_plan.resource_limits.timeout_seconds as u64);
 
                 match timeout(timeout_duration, cmd.output()).await {
                     Ok(Ok(output)) => {
@@ -92,7 +93,7 @@ async fn main() -> Result<()> {
                             execution_plan.resource_limits.timeout_seconds
                         );
                         error_message = Some(stderr_data.clone());
-                        // Note: Child process cleanup happens when cmd (the Child handle) is dropped, 
+                        // Note: Child process cleanup happens when cmd (the Child handle) is dropped,
                         // but cmd.output() consumes it. If timeout occurs, we might need a more complex
                         // handle to kill it explicitly if it's a persistent process.
                     }
