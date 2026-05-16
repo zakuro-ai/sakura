@@ -34,9 +34,9 @@ classifiers = [
 
 [project.optional-dependencies]
 huggingface = [
-    "transformers>=5.8.1",
-    "datasets>=2.14.0",
-    "accelerate>=1.13.0",
+    "transformers>=4.40.0",
+    "datasets>=4.8.5",
+    "accelerate>=1.1.0",
 ]
 bench = ["sakura-ml[huggingface]"]
 
