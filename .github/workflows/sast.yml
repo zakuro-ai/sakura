@@ -1,0 +1,100 @@
+name: sast
+
+# Companion to zakuro's sast.yml; adapted for sakura's Python + Rust surface.
+# Closes the sakura half of zakuro#122.
+
+on:
+  push:
+    branches: [main, master, dev]
+  pull_request:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: sast-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codeql-python:
+    name: CodeQL (python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-extended,security-and-quality
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
+
+  semgrep:
+    name: Semgrep (python.security + custom rules)
+    runs-on: ubuntu-latest
+    # Report-only on introduction. Sakura has a known cloudpickle call site
+    # in sakura/dispatch/remote.py that the custom rule will flag — that
+    # site is exactly what zakuro#117 will migrate to a safe wire format,
+    # at which point we ratchet this lane back to strict.
+    continue-on-error: true
+    container:
+      image: returntocorp/semgrep:1.92.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mark workspace as a safe git directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config=p/python \
+            --config=p/security-audit \
+            --config=p/owasp-top-ten \
+            --config=.semgrep/sakura.yml \
+            --sarif --output=semgrep.sarif \
+            --error
+      - name: Upload SARIF
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  gitleaks:
+    name: gitleaks (secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        # gitleaks-action v2 requires a paid licence for org repos. The
+        # binary itself stays MIT-licensed, so we install and run it
+        # directly.
+        run: |
+          GL_VERSION=8.21.2
+          curl -sSL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+      - name: Run gitleaks (full history)
+        run: |
+          gitleaks detect \
+            --source . \
+            --no-banner \
+            --redact \
+            --verbose \
+            --report-format sarif \
+            --report-path gitleaks.sarif \
+            --exit-code 1
+      - name: Upload SARIF
+        if: always() && hashFiles('gitleaks.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks

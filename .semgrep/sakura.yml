@@ -1,0 +1,52 @@
+# Custom Semgrep rules for sakura. Mirror of zakuro's .semgrep/zakuro.yml
+# with the same cloudpickle / pickle ban. Sakura has a known call site at
+# sakura/dispatch/remote.py:27 (cloudpickle.loads(wire_result.aux)) that
+# zakuro#117 will migrate to the safe wire format — this rule keeps the
+# concern visible until that lands.
+
+rules:
+  - id: sakura.deserialization.cloudpickle-loads-untrusted
+    severity: ERROR
+    languages: [python]
+    message: >-
+      cloudpickle.loads / pickle.loads on attacker-influenced input is a
+      remote-code-execution primitive. The Zakuro wire format is being
+      migrated off cloudpickle (zakuro#117); until that lands, every call
+      site that deserialises an untrusted byte stream must go through the
+      vetted `zakuro.wire.safe_loads` adapter, not raw cloudpickle.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      references:
+        - https://docs.python.org/3/library/pickle.html#module-pickle
+        - https://github.com/zakuro-ai/zakuro/issues/117
+    patterns:
+      - pattern-either:
+          - pattern: cloudpickle.loads(...)
+          - pattern: pickle.loads(...)
+          - pattern: cloudpickle.load(...)
+          - pattern: pickle.load(...)
+      - pattern-not-inside: |
+          # type: ignore[zakuro-safe-pickle]
+          ...
+      - pattern-not-inside: |
+          def safe_loads(...):
+              ...
+
+  - id: sakura.subprocess.shell-true
+    severity: WARNING
+    languages: [python]
+    message: >-
+      `subprocess.run(..., shell=True)` opens a shell-injection surface
+      whenever any part of the command list is derived from user input.
+      Prefer argv-list invocations.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run(..., shell=True, ...)
+          - pattern: subprocess.Popen(..., shell=True, ...)
+          - pattern: subprocess.call(..., shell=True, ...)
+          - pattern: subprocess.check_call(..., shell=True, ...)
+          - pattern: subprocess.check_output(..., shell=True, ...)
