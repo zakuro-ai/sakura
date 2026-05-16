@@ -28,11 +28,11 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true   # report-only on introduction; ratchet later
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v7
       - name: Export resolved requirements
         run: |
           uv export --format requirements-txt --no-hashes --frozen \
@@ -47,7 +47,7 @@ jobs:
             --vulnerability-service osv
       - name: Upload audit input on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pip-audit-input
           path: requirements.audit.txt
@@ -56,7 +56,7 @@ jobs:
   osv-scanner:
     name: osv-scanner (lockfiles)
     # osv-scanner picks up both uv.lock and Cargo.lock automatically.
-    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v1.9.2"
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.8"
     permissions:
       contents: read
       security-events: write
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true   # report-only on introduction
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true   # report-only on introduction
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run trivy fs
         uses: aquasecurity/trivy-action@master
         with:
@@ -100,7 +100,7 @@ jobs:
           ignore-unfixed: true
       - name: Upload SARIF
         if: always() && hashFiles('trivy-fs.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
