@@ -20,7 +20,7 @@ dependencies = [
     "lightning",
     "ipython",
     "charset-normalizer>=3.1.0",
-    "zakuro-ai>=0.2.3",
+    "zakuro-ai>=0.2.9",
 ]
 classifiers = [
     "Intended Audience :: Developers",
