@@ -8,7 +8,7 @@ use clap::Parser;
 use std::fs;
 use std::process::Stdio;
 use tokio::process::Command;
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
 
 use cli::{Cli, Commands};
 use models::{ExecutionPlan, ExecutionResult};
@@ -54,10 +54,12 @@ async fn main() -> Result<()> {
                 cmd.stderr(Stdio::piped());
 
                 if let Some(ref work_dir) = execution_plan.working_dir {
+                    if work_dir.is_empty() || work_dir.starts_with('/') || work_dir.contains("..") {
+                        return Err(anyhow::anyhow!("Invalid or unsafe working directory"));
+                    }
                     let workspace = artifact_dir_path.join("workspace");
                     let full_work_dir = workspace.join(work_dir);
-                    // Ensure the directory exists or at least point to it
-                    let _ = fs::create_dir_all(&full_work_dir);
+                    fs::create_dir_all(&full_work_dir)?;
                     cmd.current_dir(full_work_dir);
                 } else {
                     cmd.current_dir(artifact_dir_path.join("workspace"));
@@ -67,35 +69,47 @@ async fn main() -> Result<()> {
                     cmd.envs(env_vars);
                 }
 
-                let timeout_duration =
-                    Duration::from_secs(execution_plan.resource_limits.timeout_seconds as u64);
+                let timeout_secs = execution_plan.resource_limits.timeout_seconds;
+                if timeout_secs <= 0 {
+                    return Err(anyhow::anyhow!("Timeout must be positive"));
+                }
+                let timeout_duration = Duration::from_secs(timeout_secs as u64);
 
-                match timeout(timeout_duration, cmd.output()).await {
-                    Ok(Ok(output)) => {
-                        stdout_data = String::from_utf8_lossy(&output.stdout).to_string();
-                        stderr_data = String::from_utf8_lossy(&output.stderr).to_string();
-                        exit_code = output.status.code();
-                        status = if output.status.success() {
+                let mut child = cmd.spawn().context("Failed to spawn command")?;
+
+                // Collect the output manually
+                let mut stdout = child.stdout.take().context("No stdout")?;
+                let mut stderr = child.stderr.take().context("No stderr")?;
+
+                let mut stdout_data_raw = Vec::new();
+                let mut stderr_data_raw = Vec::new();
+
+                let wait_handle = child.wait();
+                let stdout_handle = tokio::io::AsyncReadExt::read_to_end(&mut stdout, &mut stdout_data_raw);
+                let stderr_handle = tokio::io::AsyncReadExt::read_to_end(&mut stderr, &mut stderr_data_raw);
+
+                tokio::select! {
+                    res = wait_handle => {
+                        let exit_status = res?;
+                        let _ = stdout_handle.await;
+                        let _ = stderr_handle.await;
+                        stdout_data = String::from_utf8_lossy(&stdout_data_raw).to_string();
+                        stderr_data = String::from_utf8_lossy(&stderr_data_raw).to_string();
+                        exit_code = exit_status.code();
+                        status = if exit_status.success() {
                             "succeeded".to_string()
                         } else {
                             "failed".to_string()
                         };
                     }
-                    Ok(Err(e)) => {
-                        status = "failed".to_string();
-                        stderr_data = format!("Failed to execute command: {}", e);
-                        error_message = Some(e.to_string());
-                    }
-                    Err(_) => {
+                    _ = tokio::time::sleep(timeout_duration) => {
+                        let _ = child.kill().await;
                         status = "timed_out".to_string();
                         stderr_data = format!(
                             "Job timed out after {} seconds",
-                            execution_plan.resource_limits.timeout_seconds
+                            timeout_secs
                         );
                         error_message = Some(stderr_data.clone());
-                        // Note: Child process cleanup happens when cmd (the Child handle) is dropped,
-                        // but cmd.output() consumes it. If timeout occurs, we might need a more complex
-                        // handle to kill it explicitly if it's a persistent process.
                     }
                 }
             }
@@ -140,6 +154,14 @@ async fn main() -> Result<()> {
                 }
                 if let Some(ref err) = result.error_message {
                     println!("Error: {}", err);
+                }
+            }
+
+            // Hardened cleanup: Explicitly remove the artifact directory and verify its removal
+            if artifact_dir_path.exists() {
+                fs::remove_dir_all(&artifact_dir_path).context("Critical: Failed to clean up artifact directory")?;
+                if artifact_dir_path.exists() {
+                    return Err(anyhow::anyhow!("Critical: Workspace cleanup failed audit"));
                 }
             }
         }
