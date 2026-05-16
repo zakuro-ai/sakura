@@ -1,0 +1,106 @@
+name: security-scan
+
+# Companion to zakuro's security-scan.yml; same shape adapted to sakura's
+# Maturin / Rust-extension surface (no container images yet, so no trivy
+# image lane — added if/when sakura ships an image).
+#
+# Closes the sakura half of zakuro#119 alongside .github/dependabot.yml.
+
+on:
+  push:
+    branches: [main, master, dev]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: security-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pip-audit:
+    name: pip-audit (PyPI advisories)
+    runs-on: ubuntu-latest
+    continue-on-error: true   # report-only on introduction; ratchet later
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v4
+      - name: Export resolved requirements
+        run: |
+          uv export --format requirements-txt --no-hashes --frozen \
+            > requirements.audit.txt
+      - name: Install pip-audit
+        run: pipx install pip-audit
+      - name: Run pip-audit
+        run: |
+          pip-audit \
+            --strict \
+            --requirement requirements.audit.txt \
+            --vulnerability-service osv
+      - name: Upload audit input on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-input
+          path: requirements.audit.txt
+          retention-days: 14
+
+  osv-scanner:
+    name: osv-scanner (lockfiles)
+    # osv-scanner picks up both uv.lock and Cargo.lock automatically.
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v1.9.2"
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    with:
+      scan-args: |-
+        --lockfile=uv.lock
+        --lockfile=Cargo.lock
+        --recursive
+
+  cargo-audit:
+    name: cargo-audit (Rust crates)
+    runs-on: ubuntu-latest
+    continue-on-error: true   # report-only on introduction
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+      - name: Run cargo-audit
+        run: cargo audit --deny warnings
+
+  trivy-fs:
+    name: trivy fs (repo)
+    runs-on: ubuntu-latest
+    continue-on-error: true   # report-only on introduction
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run trivy fs
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+      - name: Upload SARIF
+        if: always() && hashFiles('trivy-fs.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs

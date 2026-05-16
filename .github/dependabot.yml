@@ -1,0 +1,65 @@
+# Dependabot configuration for zakuro-ai/sakura.
+#
+# Closes the sakura half of zakuro#119 (Dependabot leg). Three ecosystems:
+# Python (uv pyproject), GitHub Actions, and Cargo crates. Security
+# updates surface immediately; non-security batched weekly.
+
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ecosystem/python"
+    groups:
+      python-runtime:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "build(deps)"
+      include: "scope"
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ecosystem/rust"
+    groups:
+      rust-runtime:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "build(deps)"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ecosystem/actions"
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci(deps)"

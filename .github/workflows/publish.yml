@@ -1,16 +1,32 @@
 name: publish
 
 # Maturin wheel matrix → PyPI for v1.0+ releases.
-# Auth: PyPI API token, stored as PYPI_API_TOKEN in the `release` environment.
-# Same auth pattern as the v0.1.x auto-release.yml — kept for continuity.
+#
+# Hardened release pipeline:
+#   * Trusted Publishing via OIDC (no long-lived PyPI token)
+#   * a CycloneDX SBOM published alongside the wheels
+#   * SLSA L3 provenance attached to the GitHub Release
+#
+# This is the sakura mirror of zakuro PR #148. There is no container image
+# step yet (sakura does not publish images), so Cosign signing is N/A here.
+# Verification snippet for consumers will land in
+# docs/security/verifying-releases.md.
 
 on:
   workflow_dispatch:
+  release:
+    types: [published]
   push:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 jobs:
+  # -------------------------------------------------------------------
+  # 1. Multi-platform wheel matrix (unchanged shape — same maturin build)
+  # -------------------------------------------------------------------
   wheels:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -52,6 +68,9 @@ jobs:
           name: wheel-${{ matrix.target }}
           path: dist/*.whl
 
+  # -------------------------------------------------------------------
+  # 2. sdist
+  # -------------------------------------------------------------------
   sdist:
     name: sdist
     runs-on: ubuntu-latest
@@ -73,31 +92,118 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
-  publish:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [wheels, sdist]
+  # -------------------------------------------------------------------
+  # 3. CycloneDX SBOM (deps are identical across wheels — generate once)
+  # -------------------------------------------------------------------
+  sbom:
+    name: SBOM
     runs-on: ubuntu-latest
-    environment: release
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Show artifacts to upload
-        run: ls -la dist/
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Publish to PyPI (API token via twine)
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Install cyclonedx-py
         run: |
-          set -euo pipefail
-          if [ -z "${TWINE_PASSWORD:-}" ]; then
-            echo "::error::PYPI_API_TOKEN secret is not set on the 'release' environment."
-            echo "::error::Configure it at https://github.com/zakuro-ai/sakura/settings/environments → release → Add secret."
-            exit 1
-          fi
-          python3 -m pip install --user --quiet twine
-          python3 -m twine upload --non-interactive --skip-existing dist/*
+          python -m pip install --upgrade pip
+          python -m pip install cyclonedx-bom
+      - name: Generate CycloneDX SBOM
+        run: |
+          mkdir -p sbom
+          cyclonedx-py environment --output-file sbom/sakura-ml.cyclonedx.json --output-format JSON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/sakura-ml.cyclonedx.json
+
+  # -------------------------------------------------------------------
+  # 4. Hash every artefact (wheels + sdist) for the SLSA generator
+  # -------------------------------------------------------------------
+  hashes:
+    name: Compute artifact hashes (for SLSA)
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - name: Download all build artefacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Compute combined hashes
+        id: hash
+        working-directory: dist
+        run: |
+          # SLSA generator wants a base64-encoded blob of `<sha256>  <file>` lines
+          # covering every subject artefact (every wheel + the sdist).
+          echo "hashes=$( (sha256sum *.whl *.tar.gz 2>/dev/null || true) | base64 -w0 )" >> "$GITHUB_OUTPUT"
+
+  # -------------------------------------------------------------------
+  # 5. SLSA L3 provenance covering every wheel + the sdist
+  # -------------------------------------------------------------------
+  provenance:
+    name: SLSA provenance
+    needs: [hashes]
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: "${{ needs.hashes.outputs.hashes }}"
+      upload-assets: true   # attach to GitHub Release when present
+
+  # -------------------------------------------------------------------
+  # 6. Trusted Publishing — OIDC, no PYPI_API_TOKEN
+  # -------------------------------------------------------------------
+  publish:
+    name: Publish to PyPI (Trusted Publishing)
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+    needs: [wheels, sdist, sbom]
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://pypi.org/project/sakura-ml/
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download wheels + sdist
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "wheel-*"
+          merge-multiple: true
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - name: Show artifacts to upload
+        run: ls -la dist/
+      - name: Publish via Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          # No `password`: OIDC token is fetched from the runner.
+
+  # -------------------------------------------------------------------
+  # 7. Attach the SBOM to the GitHub Release as an asset
+  # -------------------------------------------------------------------
+  attach-sbom:
+    name: Attach SBOM to release
+    if: github.event_name == 'release'
+    needs: [sbom, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: sbom
+      - name: Attach SBOM to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: sbom/sakura-ml.cyclonedx.json
