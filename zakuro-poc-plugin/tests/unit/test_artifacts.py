@@ -34,3 +34,15 @@ def test_does_not_overwrite_outside_root(tmp_path):
     # Testing that write_text_artifact safely rejects malicious paths
     with pytest.raises(ValueError, match="Invalid artifact name"):
         write_text_artifact(tmp_path, "../../etc/passwd", "data")
+
+def test_create_artifact_dir_rejects_path_traversal(tmp_path, monkeypatch):
+    import zakuro_poc.execution.artifacts
+    monkeypatch.setattr(zakuro_poc.execution.artifacts, "_is_safe_job_id", lambda _: True)
+    with pytest.raises(ValueError, match="Path traversal detected"):
+        create_artifact_dir(tmp_path, "../../outside")
+
+def test_create_artifact_dir_handles_collision(tmp_path):
+    job_id = new_job_id()
+    (tmp_path / job_id).mkdir()
+    with pytest.raises(RuntimeError, match=f"Artifact directory collision for job {job_id}"):
+        create_artifact_dir(tmp_path, job_id)

@@ -43,6 +43,12 @@ jobs:
       - name: Type check
         run: mypy src
 
+      - name: Security Audit (Bandit)
+        run: bandit -r src/zakuro_poc -c pyproject.toml
+
+      - name: Dependency Audit (pip-audit)
+        run: pip-audit
+
       - name: Unit and integration tests without Docker
         run: pytest -m "not docker" --cov=zakuro_poc --cov-report=term-missing
 

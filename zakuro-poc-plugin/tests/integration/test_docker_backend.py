@@ -302,3 +302,68 @@ def test_docker_non_root_user_can_write_workspace(tmp_path):
 
     assert result.status == "succeeded"
     assert (artifact_dir / "workspace" / "non-root.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_docker_backend_mock_success(tmp_path, monkeypatch):
+    import subprocess
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(
+        job_name="test-mock-success",
+        image="python:3.11-slim",
+        command=["echo", "hello"],
+    )
+    config = ZakuroPocConfig()
+
+    monkeypatch.setattr("zakuro_poc.backends.docker_backend.docker_available", lambda: True)
+
+    def fake_run(*args, **kwargs):
+        if args[0][1] == "rm":
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="mock stdout", stderr="mock stderr")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    backend = DockerBackend()
+    result = backend.run(plan, artifact_dir, config)
+
+    assert result.status == "succeeded"
+    assert result.exit_code == 0
+    assert result.stdout == "mock stdout"
+    assert result.stderr == "mock stderr"
+
+
+def test_docker_backend_mock_timeout_bytes(tmp_path, monkeypatch):
+    import subprocess
+    job_id = new_job_id()
+    artifact_dir = create_artifact_dir(tmp_path, job_id)
+    plan = ExecutionPlan(
+        job_name="test-mock-timeout",
+        image="python:3.11-slim",
+        command=["sleep", "10"],
+    )
+    plan.resource_limits.timeout_seconds = 1
+    config = ZakuroPocConfig()
+
+    monkeypatch.setattr("zakuro_poc.backends.docker_backend.docker_available", lambda: True)
+
+    def fake_run(*args, **kwargs):
+        if args[0][1] == "rm":
+            return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
+        raise subprocess.TimeoutExpired(
+            cmd=args[0],
+            timeout=1,
+            output=b"bytes stdout",
+            stderr=b"bytes stderr"
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    backend = DockerBackend()
+    result = backend.run(plan, artifact_dir, config)
+
+    assert result.status == "timed_out"
+    assert result.exit_code is None
+    assert result.stdout == "bytes stdout"
+    assert "bytes stderr" in result.stderr
+    assert "Job timed out after" in result.stderr

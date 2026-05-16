@@ -60,7 +60,8 @@
 - Do not document live `zc execute` usage until the external `zc` command contract is confirmed.
 
 ## Latest Local Validation
-- Date: 2026-05-14.
+- Date: 2026-05-16.
 - Editable install: `UV_CACHE_DIR=/tmp/uv-cache uv pip install -e ".[dev]"`.
-- Non-Docker suite: `.venv/bin/pytest -m "not docker"` passed with 72 selected tests.
+- Non-Docker suite: `.venv/bin/pytest -m "not docker" --cov=zakuro_poc` passed with 106 selected tests and 100% coverage.
 - Docker smoke suite: `.venv/bin/pytest -m docker tests/integration/test_docker_backend.py` passed with 5 selected tests after Docker socket access was approved.
+- Security and Dependency Audits: `bandit` and `pip-audit` pass.
