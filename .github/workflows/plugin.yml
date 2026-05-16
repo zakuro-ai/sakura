@@ -8,7 +8,7 @@ on:
   push:
     branches:
       - master
-      - plugin
+      - feat/integration/ai-coding-agent/main
     paths:
       - "zakuro-poc-plugin/**"
       - ".github/workflows/plugin.yml"
