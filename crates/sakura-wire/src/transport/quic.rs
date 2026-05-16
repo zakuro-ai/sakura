@@ -76,7 +76,8 @@ pub fn generate_self_signed(subject: &str) -> Result<SelfSignedPair, TransportEr
     let cert = generate_simple_self_signed(vec![subject.into()])?;
     Ok(SelfSignedPair {
         cert_der: cert.cert.der().to_vec(),
-        key_der: cert.key_pair.serialize_der(),
+        // rcgen 0.14 renamed CertifiedKey::key_pair to signing_key.
+        key_der: cert.signing_key.serialize_der(),
     })
 }
 
