@@ -39,3 +39,29 @@ pub struct ExecutionResult {
     pub finished_at: DateTime<Utc>,
     pub error_message: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_execution_plan_deserialization() {
+        let json = r#"{
+            "job_name": "test-job",
+            "backend": "zakuro",
+            "image": "python:3.11-slim",
+            "command": ["echo", "hello"],
+            "network_enabled": false,
+            "resource_limits": {
+                "cpu_count": 1.0,
+                "memory_mb": 512,
+                "timeout_seconds": 30
+            }
+        }"#;
+        let plan: ExecutionPlan = serde_json::from_str(json).unwrap();
+        assert_eq!(plan.job_name, "test-job");
+        assert_eq!(plan.command, vec!["echo", "hello"]);
+        assert!(!plan.network_enabled);
+    }
+}
