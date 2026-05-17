@@ -73,7 +73,7 @@ jobs:
   # -------------------------------------------------------------------
   sdist:
     name: sdist
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cpu]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -97,7 +97,7 @@ jobs:
   # -------------------------------------------------------------------
   sbom:
     name: SBOM
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cpu]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -122,7 +122,7 @@ jobs:
   hashes:
     name: Compute artifact hashes (for SLSA)
     needs: [wheels, sdist]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cpu]
     outputs:
       hashes: ${{ steps.hash.outputs.hashes }}
     steps:
@@ -161,7 +161,7 @@ jobs:
     name: Publish to PyPI (Trusted Publishing)
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
     needs: [wheels, sdist, sbom]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cpu]
     environment:
       name: release
       url: https://pypi.org/project/sakura-ml/
@@ -195,7 +195,7 @@ jobs:
     name: Attach SBOM to release
     if: github.event_name == 'release'
     needs: [sbom, publish]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cpu]
     permissions:
       contents: write
     steps:
