@@ -34,7 +34,7 @@ classifiers = [
 
 [project.optional-dependencies]
 huggingface = [
-    "transformers>=4.40.0",
+    "transformers>=5.10.2",
     "datasets>=4.8.5",
     "accelerate>=1.1.0",
 ]
