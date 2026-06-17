@@ -23,7 +23,7 @@ concurrency:
 jobs:
   codeql-python:
     name: CodeQL (python)
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'cpu' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: github/codeql-action/init@v4
@@ -36,7 +36,7 @@ jobs:
 
   semgrep:
     name: Semgrep (python.security + custom rules)
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'cpu' }}
+    runs-on: ubuntu-latest
     # Report-only on introduction. Sakura has a known cloudpickle call site
     # in sakura/dispatch/remote.py:27 that the custom rule will flag — that
     # site is exactly what zakuro#117 will migrate to a safe wire format,
@@ -68,7 +68,7 @@ jobs:
 
   gitleaks:
     name: gitleaks (secrets)
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'cpu' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
