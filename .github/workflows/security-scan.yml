@@ -30,7 +30,7 @@ concurrency:
 jobs:
   pip-audit:
     name: pip-audit (PyPI advisories)
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'cpu' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -68,7 +68,7 @@ jobs:
     # accept continue-on-error on the caller) and install the binary
     # directly so we can pipe through `|| true` and keep the job green
     # while still uploading SARIF.
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'cpu' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Install osv-scanner
@@ -97,7 +97,7 @@ jobs:
 
   cargo-audit:
     name: cargo-audit (Rust crates)
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'cpu' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -112,7 +112,7 @@ jobs:
 
   trivy-fs:
     name: trivy fs (repo)
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'cpu' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Run trivy fs (report-only)
