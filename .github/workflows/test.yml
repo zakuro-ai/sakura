@@ -58,5 +58,5 @@ jobs:
         run: |
           source .venv/bin/activate
           maturin develop --release
-      - name: Pytest (wire layer only — Plan 1)
-        run: .venv/bin/pytest tests/wire/ -v
+      - name: Pytest (full suite)
+        run: .venv/bin/pytest tests/ -v --ignore=tests/bench -m 'not gpu'

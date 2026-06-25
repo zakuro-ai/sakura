@@ -50,6 +50,9 @@ sakura-bench = "sakura.bench.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "gpu: tests that require CUDA hardware (deselected in CPU-only CI with -m 'not gpu')",
+]
 
 [tool.maturin]
 manifest-path = "crates/sakura-wire/Cargo.toml"
