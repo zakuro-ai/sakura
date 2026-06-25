@@ -152,11 +152,11 @@ class SakuraRuntime:
             except Exception:
                 pass
         if errors and not isinstance(event, OnError):
-            for svc, exc in errors:
+            for svc, svc_exc in errors:
                 err_evt = OnError(
                     rank=event.rank,
                     world_size=event.world_size,
-                    exc=exc,
+                    exc=svc_exc,
                     context={"service": svc.name, "event": type(event).__name__},
                 )
                 self.dispatch(err_evt)

@@ -475,7 +475,7 @@ class SakuraRunner(BaselineRunner):
         async_eval_bridge = getattr(async_eval_svc, "_bench_snapshot", None) \
             if async_eval_svc is not None else None
         async_eval_bridge_active = async_eval_bridge is not None
-        if async_eval_bridge_active:
+        if async_eval_bridge is not None:
             async_eval_bridge["val_loader"] = _DeviceLoader(val_loader, "cpu")
 
         adapter = DDPAdapter(rt, rank=0, world_size=1)

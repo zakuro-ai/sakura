@@ -41,7 +41,7 @@ class MixedPrecision(BaseService):
         self._cache_enabled = cache_enabled
         self._scaler = None
         self._autocast_ctx = None
-        self._original_forward = None
+        self._original_forward: bool | None = None
 
     def on_install(self, runtime: Any) -> None:
         # No-op at install — we wait for OnTrainBegin to inspect the model device.
