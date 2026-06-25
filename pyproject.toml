@@ -36,7 +36,7 @@ classifiers = [
 huggingface = [
     "transformers>=4.40.0",
     "datasets>=4.8.5",
-    "accelerate>=1.1.0",
+    "accelerate>=1.13.0",
 ]
 bench = ["sakura-ml[huggingface]"]
 
