@@ -19,7 +19,7 @@ dependencies = [
     "chardet",
     "lightning",
     "ipython",
-    "charset-normalizer>=3.1.0",
+    "charset-normalizer>=3.4.7",
     "zakuro-ai>=0.2.23",
     "cloudpickle",
 ]
