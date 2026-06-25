@@ -53,12 +53,28 @@ jobs:
       - name: Install build deps
         run: |
           python -m venv .venv
-          .venv/bin/pip install --upgrade pip maturin pytest mypy
+          .venv/bin/pip install --upgrade pip maturin pytest
       - name: Build + install via maturin develop
         run: |
           source .venv/bin/activate
           maturin develop --release
       - name: Pytest (wire layer only — Plan 1)
         run: .venv/bin/pytest tests/wire/ -v
-      - name: mypy (type check)
-        run: .venv/bin/mypy --config-file pyproject.toml
+
+  mypy:
+    name: mypy (type check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        with:
+          python-version: "3.12"
+      # Hermetic: mypy runs WITHOUT the ML stack installed, so
+      # ignore_missing_imports (pyproject [tool.mypy]) treats torch / numpy /
+      # lightning / the sakura_wire extension as `Any`. This makes the gate
+      # deterministic and version-independent (a new torch/numpy stub can't
+      # flip it red) and matches how the mirrors-mypy pre-commit hook runs.
+      - name: Install mypy
+        run: pip install "mypy>=1.13"
+      - name: Run mypy
+        run: mypy --config-file pyproject.toml

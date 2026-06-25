@@ -39,7 +39,7 @@ class MixedPrecision(BaseService):
         self._loss_scale = loss_scale
         self._grad_clip = grad_clip
         self._cache_enabled = cache_enabled
-        self._scaler = None
+        self._scaler: Any = None
         self._autocast_ctx = None
         self._original_forward: bool | None = None
 
