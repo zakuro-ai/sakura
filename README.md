@@ -57,7 +57,7 @@ uv pip install maturin
 maturin develop --release
 ```
 
-> **Wheel packaging** is being finalized — until then, the from-source path is the recommended install.
+> Alpha wheels are available on PyPI (`pip install sakura-ml`). Platform wheels for Linux x86_64/aarch64, macOS arm64, and Windows x86_64 are built automatically on release.
 
 ## Quickstart
 
