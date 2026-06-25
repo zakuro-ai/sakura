@@ -21,6 +21,7 @@ dependencies = [
     "ipython",
     "charset-normalizer>=3.1.0",
     "zakuro-ai>=0.2.23",
+    "cloudpickle",
 ]
 classifiers = [
     "Intended Audience :: Developers",
