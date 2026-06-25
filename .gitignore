@@ -21,6 +21,8 @@ dump.rdb
 .env
 models/
 .coverage
+coverage.xml
+htmlcov/
 
 # Rust
 /target/

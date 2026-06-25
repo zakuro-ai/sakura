@@ -42,7 +42,7 @@ huggingface = [
 bench = ["sakura-ml[huggingface]"]
 
 [dependency-groups]
-dev = ["pytest", "maturin>=1.4"]
+dev = ["pytest", "pytest-cov", "maturin>=1.4"]
 
 [project.scripts]
 sakura-worker = "sakura.worker.__main__:main"
@@ -50,6 +50,25 @@ sakura-bench = "sakura.bench.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Coverage is measured/enforced in the dedicated `coverage` CI job (full suite)
+# rather than via pytest addopts, so local single-file runs and the wire-only
+# CI lane aren't forced under the package-wide threshold. See .github/workflows/
+# test.yml. Baseline at introduction: ~76% with branch coverage (closes #101);
+# ratchet the threshold upward later.
+[tool.coverage.run]
+source = ["sakura"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "@(abc\\.)?abstractmethod",
+]
 
 [tool.maturin]
 manifest-path = "crates/sakura-wire/Cargo.toml"
