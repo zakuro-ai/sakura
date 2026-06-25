@@ -53,10 +53,12 @@ jobs:
       - name: Install build deps
         run: |
           python -m venv .venv
-          .venv/bin/pip install --upgrade pip maturin pytest
+          .venv/bin/pip install --upgrade pip maturin pytest mypy
       - name: Build + install via maturin develop
         run: |
           source .venv/bin/activate
           maturin develop --release
       - name: Pytest (wire layer only — Plan 1)
         run: .venv/bin/pytest tests/wire/ -v
+      - name: mypy (type check)
+        run: .venv/bin/mypy --config-file pyproject.toml
