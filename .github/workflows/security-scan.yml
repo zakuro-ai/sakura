@@ -119,7 +119,7 @@ jobs:
         # exit-code: "0" so the action does not fail the job on findings;
         # SARIF still uploads to the code-scanning view. Drop this once
         # the repo carries no HIGH/CRITICAL trivy fs findings.
-        uses: aquasecurity/trivy-action@cf5c088a69634cd13ccddc735d7926162c31f9a6  # master
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8  # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
