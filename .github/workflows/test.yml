@@ -5,6 +5,13 @@ on:
     branches: [master]
   pull_request:
 
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
@@ -12,14 +19,14 @@ env:
 jobs:
   rust:
     name: Rust
-    runs-on: cpu
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
         with:
           toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: cargo fmt
         run: cargo fmt --all --check
       - name: cargo clippy
@@ -29,18 +36,18 @@ jobs:
 
   python:
     name: Python ${{ matrix.python }}
-    runs-on: cpu
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v6
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
         with:
           python-version: ${{ matrix.python }}
       - name: Install build deps
@@ -51,5 +58,5 @@ jobs:
         run: |
           source .venv/bin/activate
           maturin develop --release
-      - name: Pytest (wire layer only — Plan 1)
-        run: .venv/bin/pytest tests/wire/ -v
+      - name: Pytest (full suite)
+        run: .venv/bin/pytest tests/ -v --ignore=tests/bench -m 'not gpu'

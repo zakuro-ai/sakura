@@ -1,3 +1,7 @@
+[![test](https://github.com/zakuro-ai/sakura/actions/workflows/test.yml/badge.svg)](https://github.com/zakuro-ai/sakura/actions/workflows/test.yml)
+[![sast](https://github.com/zakuro-ai/sakura/actions/workflows/sast.yml/badge.svg)](https://github.com/zakuro-ai/sakura/actions/workflows/sast.yml)
+[![PyPI](https://img.shields.io/pypi/v/sakura-ml)](https://pypi.org/project/sakura-ml/)
+
 <h1 align="center">Sakura</h1>
 
 <p align="center">
@@ -46,7 +50,7 @@ You install services on a `SakuraRuntime`, attach an adapter to your training lo
 ```bash
 pip install sakura-ml
 # or with framework integrations:
-pip install 'sakura-ml[lightning,huggingface]'
+pip install 'sakura-ml[huggingface]'
 ```
 
 From source:
@@ -57,7 +61,7 @@ uv pip install maturin
 maturin develop --release
 ```
 
-> **Wheel packaging** is being finalized — until then, the from-source path is the recommended install.
+> Alpha wheels are available on PyPI (`pip install sakura-ml`). Platform wheels for Linux x86_64/aarch64, macOS arm64, and Windows x86_64 are built automatically on release.
 
 ## Quickstart
 

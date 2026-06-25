@@ -11,16 +11,17 @@ license = "BSD-3-Clause"
 requires-python = ">=3.10"
 authors = [{ name = "ZakuroAI", email = "git@zakuro.ai" }]
 dependencies = [
-    "tqdm>=4.67.3",
-    "torch",
-    "torchvision",
+    "tqdm>=4.68.1",
+    "torch>=2.0",
+    "torchvision>=0.15",
     "numpy",
     "gnutools-python",
     "chardet",
     "lightning",
     "ipython",
     "charset-normalizer>=3.1.0",
-    "zakuro-ai>=0.2.9",
+    "zakuro-ai>=0.2.23",
+    "cloudpickle",
 ]
 classifiers = [
     "Intended Audience :: Developers",
@@ -36,7 +37,7 @@ classifiers = [
 huggingface = [
     "transformers>=5.10.2",
     "datasets>=4.8.5",
-    "accelerate>=1.1.0",
+    "accelerate>=1.13.0",
 ]
 bench = ["sakura-ml[huggingface]"]
 
@@ -49,6 +50,9 @@ sakura-bench = "sakura.bench.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "gpu: tests that require CUDA hardware (deselected in CPU-only CI with -m 'not gpu')",
+]
 
 [tool.maturin]
 manifest-path = "crates/sakura-wire/Cargo.toml"

@@ -23,20 +23,20 @@ concurrency:
 jobs:
   codeql-python:
     name: CodeQL (python)
-    runs-on: cpu
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: github/codeql-action/init@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4
         with:
           languages: python
           queries: security-extended,security-and-quality
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4
         with:
           category: "/language:python"
 
   semgrep:
     name: Semgrep (python.security + custom rules)
-    runs-on: cpu
+    runs-on: ubuntu-latest
     # Report-only on introduction. Sakura has a known cloudpickle call site
     # in sakura/dispatch/remote.py:27 that the custom rule will flag — that
     # site is exactly what zakuro#117 will migrate to a safe wire format,
@@ -48,7 +48,7 @@ jobs:
     container:
       image: returntocorp/semgrep:1.92.0
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: Mark workspace as a safe git directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Run Semgrep (report-only)
@@ -61,16 +61,16 @@ jobs:
             --sarif --output=semgrep.sarif
       - name: Upload SARIF
         if: always() && hashFiles('semgrep.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4
         with:
           sarif_file: semgrep.sarif
           category: semgrep
 
   gitleaks:
     name: gitleaks (secrets)
-    runs-on: cpu
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 0
       - name: Install gitleaks
@@ -96,7 +96,7 @@ jobs:
             --exit-code 1
       - name: Upload SARIF
         if: always() && hashFiles('gitleaks.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4
         with:
           sarif_file: gitleaks.sarif
           category: gitleaks
