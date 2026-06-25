@@ -46,7 +46,7 @@ You install services on a `SakuraRuntime`, attach an adapter to your training lo
 ```bash
 pip install sakura-ml
 # or with framework integrations:
-pip install 'sakura-ml[lightning,huggingface]'
+pip install 'sakura-ml[huggingface]'
 ```
 
 From source:
