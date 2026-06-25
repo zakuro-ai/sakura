@@ -1,3 +1,7 @@
+[![test](https://github.com/zakuro-ai/sakura/actions/workflows/test.yml/badge.svg)](https://github.com/zakuro-ai/sakura/actions/workflows/test.yml)
+[![sast](https://github.com/zakuro-ai/sakura/actions/workflows/sast.yml/badge.svg)](https://github.com/zakuro-ai/sakura/actions/workflows/sast.yml)
+[![PyPI](https://img.shields.io/pypi/v/sakura-ml)](https://pypi.org/project/sakura-ml/)
+
 <h1 align="center">Sakura</h1>
 
 <p align="center">
