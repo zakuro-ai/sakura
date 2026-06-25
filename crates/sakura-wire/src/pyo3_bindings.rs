@@ -55,7 +55,11 @@ impl From<PyWireError> for PyErr {
     }
 }
 
-#[pyclass(name = "TlsConfig")]
+// pyo3 0.29: the auto-`FromPyObject` impl for `#[pyclass]` types that also
+// derive `Clone` is now opt-in. `PyTlsConfig` is consumed by-value as a
+// `#[new]` argument (`Dispatcher(target_uri, tls)`), so it needs the derive —
+// opt in explicitly via `from_py_object`.
+#[pyclass(name = "TlsConfig", from_py_object)]
 #[derive(Clone)]
 pub struct PyTlsConfig {
     cert_der: Vec<u8>,
@@ -121,7 +125,7 @@ impl PyFuture {
             .unwrap()
             .take()
             .ok_or_else(|| PyErr::from(PyWireError::AlreadyConsumed))?;
-        py.allow_threads(move || -> PyResult<PyRpcResult> {
+        py.detach(move || -> PyResult<PyRpcResult> {
             let outcome = match timeout {
                 None => WireRuntime::shared().block_on(rx),
                 Some(secs) => {
@@ -235,9 +239,15 @@ struct TensorTuple {
     data: Vec<u8>,
 }
 
-impl<'py> FromPyObject<'py> for TensorTuple {
-    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if let Ok(dict) = ob.downcast::<PyDict>() {
+// pyo3 0.29 reworked `FromPyObject`: it now carries two lifetimes (`'a`, `'py`)
+// and an associated `Error` type, and the required method is `extract` taking a
+// `Borrowed` (the old `extract_bound(&Bound)` shim was removed). `Borrowed`
+// derefs to `Bound`, and `.downcast()` was renamed to `.cast()`.
+impl<'py> FromPyObject<'_, 'py> for TensorTuple {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
+        if let Ok(dict) = ob.cast::<PyDict>() {
             let shape: Vec<u32> = dict
                 .get_item("shape")?
                 .ok_or_else(|| PyValueError::new_err("missing 'shape'"))?
@@ -457,7 +467,7 @@ impl PyWorkerSupervisor {
 #[pyfunction]
 #[pyo3(signature = (addr, print_handshake = true))]
 pub fn run_echo_server(py: Python<'_>, addr: String, print_handshake: bool) -> PyResult<()> {
-    py.allow_threads(|| -> PyResult<()> {
+    py.detach(|| -> PyResult<()> {
         WireRuntime::shared().block_on(async move {
             let pair = generate_self_signed("localhost")
                 .map_err(|e| PyRuntimeError::new_err(format!("cert: {e}")))?;
@@ -527,11 +537,11 @@ pub fn run_echo_server(py: Python<'_>, addr: String, print_handshake: bool) -> P
 pub fn run_server(
     py: Python<'_>,
     addr: String,
-    callback: PyObject,
+    callback: Py<PyAny>,
     print_handshake: bool,
 ) -> PyResult<()> {
     let cb = std::sync::Arc::new(callback);
-    py.allow_threads(|| -> PyResult<()> {
+    py.detach(|| -> PyResult<()> {
         WireRuntime::shared().block_on(async move {
             let pair = generate_self_signed("localhost")
                 .map_err(|e| PyRuntimeError::new_err(format!("cert: {e}")))?;
@@ -583,7 +593,7 @@ pub fn run_server(
 
 /// Decode an RPC request, invoke the Python callback under the GIL, and
 /// re-encode its response.
-fn dispatch_via_callback(callback: &PyObject, req_bytes: &[u8]) -> Result<Vec<u8>, PyWireError> {
+fn dispatch_via_callback(callback: &Py<PyAny>, req_bytes: &[u8]) -> Result<Vec<u8>, PyWireError> {
     use crate::codec::{unpack_request, RpcResponseHeader, RpcStatus, TensorDesc, WireVersion};
     let (header, descs, tensors, aux) = unpack_request(req_bytes).map_err(|e| {
         PyWireError::Wire(WireError::DecodeFailed {
@@ -593,7 +603,7 @@ fn dispatch_via_callback(callback: &PyObject, req_bytes: &[u8]) -> Result<Vec<u8
     })?;
 
     let (out_tensors_descs, out_tensors_bytes, out_aux): (Vec<TensorDesc>, Vec<Vec<u8>>, Vec<u8>) =
-        Python::with_gil(|py| -> PyResult<_> {
+        Python::attach(|py| -> PyResult<_> {
             // Build the tensors list as Python list[dict].
             let py_tensors = PyList::empty(py);
             for (desc, bytes) in descs.iter().zip(tensors.iter()) {
