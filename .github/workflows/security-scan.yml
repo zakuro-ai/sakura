@@ -30,13 +30,13 @@ concurrency:
 jobs:
   pip-audit:
     name: pip-audit (PyPI advisories)
-    runs-on: [self-hosted, cpu]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
       - name: Export resolved requirements
         run: |
           uv export --format requirements-txt --no-hashes --frozen \
@@ -54,7 +54,7 @@ jobs:
             --vulnerability-service osv || true
       - name: Upload audit input on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: pip-audit-input
           path: requirements.audit.txt
@@ -68,9 +68,9 @@ jobs:
     # accept continue-on-error on the caller) and install the binary
     # directly so we can pipe through `|| true` and keep the job green
     # while still uploading SARIF.
-    runs-on: [self-hosted, cpu]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: Install osv-scanner
         run: |
           OSV_VERSION=2.0.0
@@ -90,20 +90,20 @@ jobs:
             || true
       - name: Upload SARIF
         if: always() && hashFiles('osv-scanner.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4
         with:
           sarif_file: osv-scanner.sarif
           category: osv-scanner
 
   cargo-audit:
     name: cargo-audit (Rust crates)
-    runs-on: [self-hosted, cpu]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: Install cargo-audit
         run: cargo install --locked cargo-audit
       - name: Run cargo-audit (report-only)
@@ -112,14 +112,14 @@ jobs:
 
   trivy-fs:
     name: trivy fs (repo)
-    runs-on: [self-hosted, cpu]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: Run trivy fs (report-only)
         # exit-code: "0" so the action does not fail the job on findings;
         # SARIF still uploads to the code-scanning view. Drop this once
         # the repo carries no HIGH/CRITICAL trivy fs findings.
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8  # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -130,7 +130,7 @@ jobs:
           ignore-unfixed: true
       - name: Upload SARIF
         if: always() && hashFiles('trivy-fs.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
