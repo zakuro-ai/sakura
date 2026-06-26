@@ -56,7 +56,7 @@ class Compile(BaseService):
                 dynamic=self._dynamic,
                 fullgraph=self._fullgraph,
             )
-        except BaseException:
+        except Exception:
             # Compile failed — fall back to eager. compiled_called remains True
             # (we attempted; the result is eager fallback).
             pass

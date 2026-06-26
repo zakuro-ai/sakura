@@ -18,8 +18,8 @@ class Service(Protocol):
     priority: int
     requires: tuple[str, ...]
 
-    def on_install(self, runtime: Any) -> None: ...
-    def on_event(self, event: Event) -> None: ...
+    def on_install(self, runtime: Any) -> None: pass
+    def on_event(self, event: Event) -> None: pass
 
 
 class BaseService:

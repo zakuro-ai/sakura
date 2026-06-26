@@ -5,4 +5,4 @@ cd /workspace
 
 export SAKURA_ROLE=1
 cd /tmp
-redis-server
+exec s6-setuidgid foo redis-server

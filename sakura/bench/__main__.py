@@ -13,7 +13,7 @@ import os
 import sys
 from typing import Optional
 
-from sakura.bench.harness import BaselineRunner, RunReport, SakuraRunner, Workload
+from sakura.bench.harness import BaselineRunner, SakuraRunner, Workload
 
 
 _WORKLOAD_REGISTRY = {
