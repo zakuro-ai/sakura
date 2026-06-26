@@ -57,7 +57,7 @@ jobs:
       - name: Build + install via maturin develop
         run: |
           source .venv/bin/activate
-          maturin develop --release
+          maturin develop --release -E training
       - name: Pytest (full suite)
         run: .venv/bin/pytest tests/ -v --ignore=tests/bench -m 'not gpu'
 
