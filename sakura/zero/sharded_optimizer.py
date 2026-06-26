@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from sakura._optional import load
+
 
 class ShardedOptimizer:
     """ZeRO stage-1 sharded optimizer wrapper.
@@ -31,6 +33,9 @@ class ShardedOptimizer:
         *,
         process_group: Optional[Any] = None,
     ):
+        # torch is an optional ("training") dependency; surface a friendly
+        # install hint instead of a bare ModuleNotFoundError.
+        load("torch", extra="training")
         import torch.distributed as dist
         self._opt = optimizer
         self._pg = process_group
