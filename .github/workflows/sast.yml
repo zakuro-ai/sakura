@@ -37,27 +37,20 @@ jobs:
   semgrep:
     name: Semgrep (python.security + custom rules)
     runs-on: ubuntu-latest
-    # Report-only on introduction. Sakura has a known cloudpickle call site
-    # in sakura/dispatch/remote.py:27 that the custom rule will flag — that
-    # site is exactly what zakuro#117 will migrate to a safe wire format,
-    # at which point we ratchet this lane back to strict.
-    #
-    # Drop `--error` (which is what makes semgrep exit non-zero on findings)
-    # so the JOB stays green even when findings are present; SARIF still
-    # uploads, the work stays visible.
     container:
       image: returntocorp/semgrep:1.92.0
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: Mark workspace as a safe git directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Run Semgrep (report-only)
+      - name: Run Semgrep
         run: |
           semgrep scan \
             --config=p/python \
             --config=p/security-audit \
             --config=p/owasp-top-ten \
             --config=.semgrep/sakura.yml \
+            --error \
             --sarif --output=semgrep.sarif
       - name: Upload SARIF
         if: always() && hashFiles('semgrep.sarif') != ''
