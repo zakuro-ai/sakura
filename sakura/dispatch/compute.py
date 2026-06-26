@@ -9,7 +9,10 @@ import time.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
+
+if TYPE_CHECKING:
+    from sakura.dispatch.base import Dispatcher
 
 
 _VALID_STRATEGIES = ("round-robin", "least-loaded")

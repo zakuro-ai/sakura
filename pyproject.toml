@@ -42,7 +42,7 @@ huggingface = [
 bench = ["sakura-ml[huggingface]"]
 
 [dependency-groups]
-dev = ["pytest", "maturin>=1.4"]
+dev = ["pytest", "maturin>=1.4", "mypy>=1.13"]
 
 [project.scripts]
 sakura-worker = "sakura.worker.__main__:main"
@@ -53,6 +53,17 @@ testpaths = ["tests"]
 markers = [
     "gpu: tests that require CUDA hardware (deselected in CPU-only CI with -m 'not gpu')",
 ]
+
+[tool.mypy]
+# Lenient on introduction (closes #102): the gate is green today and blocks
+# *new* type regressions. `ignore_missing_imports` keeps torch / lightning /
+# the sakura_wire Rust extension as `Any` so the check runs without the heavy
+# ML stack installed. Ratchet toward `strict = true` (and drop the ignore) in
+# follow-up sprints as stubs land.
+python_version = "3.10"
+files = ["sakura"]
+ignore_missing_imports = true
+strict = false
 
 [tool.maturin]
 manifest-path = "crates/sakura-wire/Cargo.toml"
