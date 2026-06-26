@@ -122,11 +122,11 @@ class SakuraRuntime:
                 })
             return
 
-        errors: Optional[list[tuple[Service, BaseException]]] = None
+        errors: Optional[list[tuple[Service, Exception]]] = None
         for s in services:
             try:
                 s.on_event(event)
-            except BaseException as exc:  # noqa: BLE001  # lgtm[py/catch-base-exception]
+            except Exception as exc:
                 if errors is None:
                     errors = []
                 errors.append((s, exc))
