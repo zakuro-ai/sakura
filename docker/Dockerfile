@@ -41,7 +41,9 @@ RUN uv pip install --system pytest /tmp/*.whl && rm /tmp/*.whl
 
 COPY tests/ /workspace/tests/
 COPY pyproject.toml /workspace/pyproject.toml
+RUN useradd -m -s /bin/bash sakura && chown -R sakura:sakura /workspace
 WORKDIR /workspace
+USER sakura
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python3 -c "import sakura" || exit 1
 CMD ["python3", "-m", "pytest", "tests/", "-v"]
@@ -52,6 +54,7 @@ CMD ["python3", "-m", "pytest", "tests/", "-v"]
 FROM base AS production
 
 # s6-overlay
+# Note: /init must run as root to supervise services; redis drops to foo via s6-setuidgid.
 ADD https://github.com/just-containers/s6-overlay/releases/download/v3.2.0.2/s6-overlay-noarch.tar.xz /tmp
 RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz
 ADD https://github.com/just-containers/s6-overlay/releases/download/v3.2.0.2/s6-overlay-x86_64.tar.xz /tmp

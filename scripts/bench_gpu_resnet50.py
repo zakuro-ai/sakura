@@ -21,7 +21,7 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Optional
 
 
@@ -103,7 +103,7 @@ def _run_one(config: str, epochs: int, batch_size: int, n_train: int, n_val: int
                 try:
                     final_scale = float(scaler.get_scale())
                 except Exception:
-                    pass
+                    pass  # best-effort: GPU info unavailable
             break
     print(json.dumps({
         "config": config,

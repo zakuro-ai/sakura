@@ -19,7 +19,7 @@ dependencies = [
     "chardet",
     "lightning",
     "ipython",
-    "charset-normalizer>=3.1.0",
+    "charset-normalizer>=3.4.7",
     "zakuro-ai>=0.2.23",
     "cloudpickle",
 ]
@@ -35,14 +35,14 @@ classifiers = [
 
 [project.optional-dependencies]
 huggingface = [
-    "transformers>=4.40.0",
+    "transformers>=5.10.2",
     "datasets>=4.8.5",
     "accelerate>=1.13.0",
 ]
 bench = ["sakura-ml[huggingface]"]
 
 [dependency-groups]
-dev = ["pytest", "pytest-cov", "maturin>=1.4"]
+dev = ["pytest", "pytest-cov", "maturin>=1.4", "mypy>=1.13"]
 
 [project.scripts]
 sakura-worker = "sakura.worker.__main__:main"
@@ -50,6 +50,20 @@ sakura-bench = "sakura.bench.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "gpu: tests that require CUDA hardware (deselected in CPU-only CI with -m 'not gpu')",
+]
+
+[tool.mypy]
+# Lenient on introduction (closes #102): the gate is green today and blocks
+# *new* type regressions. `ignore_missing_imports` keeps torch / lightning /
+# the sakura_wire Rust extension as `Any` so the check runs without the heavy
+# ML stack installed. Ratchet toward `strict = true` (and drop the ignore) in
+# follow-up sprints as stubs land.
+python_version = "3.10"
+files = ["sakura"]
+ignore_missing_imports = true
+strict = false
 
 # Coverage is measured/enforced in the dedicated `coverage` CI job (full suite)
 # rather than via pytest addopts, so local single-file runs and the wire-only

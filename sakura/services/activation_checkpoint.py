@@ -1,7 +1,7 @@
 """ActivationCheckpoint — wrap matching submodules with torch.utils.checkpoint."""
 from __future__ import annotations
 
-from typing import Literal, Optional, Union
+from typing import Literal, Union
 
 from sakura.events import OnTrainBegin
 from sakura.service import BaseService

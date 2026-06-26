@@ -11,8 +11,6 @@ Hook mapping (per spec §10.1):
 """
 from __future__ import annotations
 
-from typing import Any
-
 try:
     from lightning.pytorch import Callback
 except ImportError:  # pragma: no cover

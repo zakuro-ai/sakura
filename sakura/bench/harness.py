@@ -86,7 +86,7 @@ def detect_hardware() -> dict:
         try:
             info["gpu_name"] = torch.cuda.get_device_name(0)
         except Exception:
-            pass
+            pass  # best-effort: GPU info unavailable
     return info
 
 
@@ -475,7 +475,7 @@ class SakuraRunner(BaselineRunner):
         async_eval_bridge = getattr(async_eval_svc, "_bench_snapshot", None) \
             if async_eval_svc is not None else None
         async_eval_bridge_active = async_eval_bridge is not None
-        if async_eval_bridge_active:
+        if async_eval_bridge is not None:
             async_eval_bridge["val_loader"] = _DeviceLoader(val_loader, "cpu")
 
         adapter = DDPAdapter(rt, rank=0, world_size=1)

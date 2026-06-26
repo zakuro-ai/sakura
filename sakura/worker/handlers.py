@@ -40,7 +40,7 @@ def _tensors_to_arrays(tensors: list[dict]) -> list[np.ndarray]:
     out: list[np.ndarray] = []
     for t in tensors:
         dtype = _DTYPE_TABLE.get(t["dtype_id"], np.uint8)
-        arr = np.frombuffer(t["data"], dtype=dtype)
+        arr: np.ndarray = np.frombuffer(t["data"], dtype=dtype)
         if t["shape"]:
             arr = arr.reshape(tuple(t["shape"]))
         out.append(arr)

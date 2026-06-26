@@ -128,6 +128,7 @@ def _run_multi_rank_nccl(step_count: int) -> dict:
                 os.unlink(init_file)
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(
     not (dist.is_available() and dist.is_nccl_available()
          and torch.cuda.is_available() and torch.cuda.device_count() >= WORLD_SIZE),

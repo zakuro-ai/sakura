@@ -58,7 +58,7 @@ class LocalDispatcher(Dispatcher):
         try:
             self._supervisor.shutdown()
         except Exception:
-            pass
+            pass  # best-effort: ignore supervisor errors during cleanup
 
     def stats(self) -> dict:
         return {"kind": "local", "uri": self._uri}

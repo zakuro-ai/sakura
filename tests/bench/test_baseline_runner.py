@@ -108,10 +108,10 @@ def _make_hf_synthetic_workload() -> Workload:
         n, seq_len = 8, 4
 
         class _DS(torch.utils.data.Dataset):
-            def __len__(self_):
+            def __len__(self):
                 return n
 
-            def __getitem__(self_, i):
+            def __getitem__(self, i):
                 return {
                     "input_ids": torch.randint(0, 100, (seq_len,)),
                     "attention_mask": torch.ones(seq_len, dtype=torch.long),

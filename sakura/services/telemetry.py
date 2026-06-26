@@ -64,7 +64,7 @@ class Telemetry(BaseService):
             try:
                 out(record)
             except Exception:
-                pass
+                pass  # best-effort: telemetry failures must not interrupt the training loop
             return
         if isinstance(out, str):
             if self._opened is None:
@@ -76,14 +76,14 @@ class Telemetry(BaseService):
             f.write(json.dumps(record, default=str) + "\n")
             f.flush()
         except Exception:
-            pass
+            pass  # best-effort: telemetry failures must not interrupt the training loop
 
     def on_runtime_shutdown(self, runtime: Any) -> None:
         if self._opened is not None:
             try:
                 self._opened.close()
             except Exception:
-                pass
+                pass  # best-effort: telemetry failures must not interrupt the training loop
             self._opened = None
 
     def on_event(self, event: Event) -> None:

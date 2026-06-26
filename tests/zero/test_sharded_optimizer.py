@@ -42,7 +42,7 @@ def _worker(rank, world_size, port):
         snapshot = p.detach().clone()
         dist.all_reduce(p.detach(), op=dist.ReduceOp.SUM)
         # If all ranks have the same value, sum should be world_size * snapshot.
-        expected = snapshot * world_size
+        _expected = snapshot * world_size
         assert torch.allclose(p.detach() / world_size, snapshot, atol=1e-5)
         # Restore for next iteration (no-op since this is end of test)
         p.data.copy_(snapshot)

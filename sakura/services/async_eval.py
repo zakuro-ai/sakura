@@ -6,10 +6,10 @@ with model_factory/state_dict for real model evaluation.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Literal
 
 from sakura.dispatch.base import Dispatcher, Future
-from sakura.events import Event, OnEpochEnd, OnTrainEnd
+from sakura.events import OnEpochEnd, OnTrainEnd
 from sakura.service import BaseService
 
 
@@ -102,7 +102,7 @@ class AsyncEval(BaseService):
                 rec = dict(v)
                 rec.setdefault("epoch", epoch)
                 self._history.append(rec)
-        except BaseException as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             self._history.append({"epoch": epoch, "skipped": True,
                                    "reason": type(exc).__name__})
 
