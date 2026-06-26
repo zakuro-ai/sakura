@@ -8,7 +8,7 @@ def test_workload_carries_required_fields():
     w = Workload(
         name="dummy",
         tier="smoke",
-        make_model=lambda: object(),
+        make_model=object,
         make_train_loader=lambda: [(1, 2)],
         make_val_loader=lambda: [(3, 4)],
         eval_fn=lambda model, payload: {"loss": 0.0},

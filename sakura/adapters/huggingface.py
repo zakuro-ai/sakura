@@ -10,7 +10,6 @@ except ImportError:  # pragma: no cover
 from sakura.adapters.base import Adapter
 from sakura.events import (
     OnEpochEnd,
-    OnError,
     OnOptimizerStep,
     OnTrainBegin,
     OnTrainEnd,

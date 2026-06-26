@@ -7,8 +7,6 @@ Tests the integration matrix from spec §6.8 on the cases Plan 3 ships:
 """
 from __future__ import annotations
 
-import pytest
-
 from sakura.dispatch.in_thread import InThreadDispatcher
 from sakura.events import OnEpochEnd, OnTrainEnd
 from sakura.runtime import SakuraRuntime

@@ -86,7 +86,7 @@ def detect_hardware() -> dict:
         try:
             info["gpu_name"] = torch.cuda.get_device_name(0)
         except Exception:
-            pass
+            pass  # best-effort: GPU info unavailable
     return info
 
 

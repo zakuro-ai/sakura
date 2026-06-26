@@ -1,8 +1,6 @@
 """Adapter ABC: holds the runtime + provides an emit() helper."""
 from __future__ import annotations
 
-import pytest
-
 from sakura.adapters.base import Adapter
 from sakura.events import OnEpochEnd
 from sakura.runtime import SakuraRuntime

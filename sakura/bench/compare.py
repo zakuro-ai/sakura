@@ -1,7 +1,6 @@
 """Comparison utilities for RunReport JSON files."""
 from __future__ import annotations
 
-import json
 from typing import Iterable, List
 
 from sakura.bench.harness import RunReport

@@ -41,7 +41,9 @@ RUN uv pip install --system pytest /tmp/*.whl && rm /tmp/*.whl
 
 COPY tests/ /workspace/tests/
 COPY pyproject.toml /workspace/pyproject.toml
+RUN useradd -m -s /bin/bash sakura && chown -R sakura:sakura /workspace
 WORKDIR /workspace
+USER sakura
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python3 -c "import sakura" || exit 1
 CMD ["python3", "-m", "pytest", "tests/", "-v"]
@@ -50,6 +52,10 @@ CMD ["python3", "-m", "pytest", "tests/", "-v"]
 # Production stage — s6-overlay + redis service
 # ---------------------------------------------------------------------------
 FROM base AS production
+
+# s6-overlay's /init entrypoint requires root to supervise services.
+# Individual services (redis) drop to the foo user via s6-setuidgid.
+USER root
 
 # s6-overlay
 ADD https://github.com/just-containers/s6-overlay/releases/download/v3.2.0.2/s6-overlay-noarch.tar.xz /tmp
@@ -68,4 +74,5 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/${TASK}/type && \
 WORKDIR /workspace
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python3 -c "import sakura" && redis-cli ping | grep -q PONG || exit 1
+# nosemgrep: dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
 ENTRYPOINT ["/init"]

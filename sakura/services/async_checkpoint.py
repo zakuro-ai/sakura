@@ -77,7 +77,7 @@ class AsyncCheckpoint(BaseService):
             self._pending.append(fut)
             # Reap done.
             self._reap_done()
-        except BaseException as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             self._history.append({"epoch": event.epoch, "skipped": True,
                                    "reason": type(exc).__name__})
 
@@ -89,8 +89,8 @@ class AsyncCheckpoint(BaseService):
                 v = r.value if hasattr(r, "value") else r
                 if isinstance(v, dict):
                     self._history.append(v)
-            except BaseException:
-                pass
+            except Exception:
+                pass  # best-effort: checkpoint result unavailable
         self._pending.clear()
 
     def _ext(self) -> str:
@@ -126,8 +126,8 @@ class AsyncCheckpoint(BaseService):
                     v = r.value if hasattr(r, "value") else r
                     if isinstance(v, dict):
                         self._history.append(v)
-                except BaseException:
-                    pass
+                except Exception:
+                    pass  # best-effort
             else:
                 still.append(fut)
         self._pending = still

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from sakura.events import (
     Event,
-    OnEpochBegin,
     OnEpochEnd,
     OnError,
     OnOptimizerStep,
