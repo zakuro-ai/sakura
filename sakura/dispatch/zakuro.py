@@ -53,7 +53,7 @@ class ZakuroDispatcher(Dispatcher):
         t0 = time.perf_counter_ns()
         try:
             value = _wrapped.to(self._zk_compute)(*args, **kwargs)
-        except BaseException as exc:  # noqa: BLE001  # lgtm[py/catch-base-exception]
+        except Exception as exc:
             return _ZkFuture(value=None, exc=exc,
                               elapsed_us=(time.perf_counter_ns() - t0) // 1000)
         return _ZkFuture(value=value, exc=None,

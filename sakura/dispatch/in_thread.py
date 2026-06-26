@@ -41,7 +41,7 @@ class InThreadDispatcher(Dispatcher):
         t0 = time.perf_counter_ns()
         try:
             value = callable(*args, **kwargs)
-        except BaseException as exc:  # noqa: BLE001  # lgtm[py/catch-base-exception]
+        except Exception as exc:
             return _ResolvedFuture(exc=exc, elapsed_us=(time.perf_counter_ns() - t0) // 1000)
         return _ResolvedFuture(value=value, elapsed_us=(time.perf_counter_ns() - t0) // 1000)
 
