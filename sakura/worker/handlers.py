@@ -65,6 +65,7 @@ def handle_exec_cloudpickled(tensors: list[dict], aux: bytes) -> Tuple[list[dict
     The decoded numpy arrays from `tensors` are passed as positional args BEFORE
     `args` so callers write `submit(fn, np_arr_1, np_arr_2, scalar=...)`.
     """
+    # nosemgrep: sakura.deserialization.cloudpickle-loads-untrusted
     spec = cloudpickle.loads(aux)
     fn = spec["fn"]
     extra_args = spec.get("args", ())

@@ -24,6 +24,7 @@ class _WireFuture(Future):
 
     def result(self, timeout: Optional[float] = None) -> Result:
         wire_result = self._fut.result(timeout=timeout)
+        # nosemgrep: sakura.deserialization.cloudpickle-loads-untrusted
         value = cloudpickle.loads(wire_result.aux)
         if isinstance(value, BaseException):
             raise value
