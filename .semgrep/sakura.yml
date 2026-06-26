@@ -1,8 +1,10 @@
 # Custom Semgrep rules for sakura. Mirror of zakuro's .semgrep/zakuro.yml
-# with the same cloudpickle / pickle ban. Sakura has a known call site at
-# sakura/dispatch/remote.py:27 (cloudpickle.loads(wire_result.aux)) that
-# zakuro#117 will migrate to the safe wire format — this rule keeps the
-# concern visible until that lands.
+# with the same cloudpickle / pickle ban. This lane is BLOCKING in sast.yml:
+# the cloudpickle rule below fails CI on any new call site. The accepted
+# dispatch-RPC sites (sakura/dispatch/remote.py, sakura/worker/handlers.py)
+# carry inline `# nosemgrep` suppressions justified by the documented trust
+# model (SECURITY.md). Eliminating the primitive entirely is tracked in
+# zakuro#117.
 
 rules:
   - id: sakura.deserialization.cloudpickle-loads-untrusted
@@ -10,28 +12,29 @@ rules:
     languages: [python]
     message: >-
       cloudpickle.loads / pickle.loads on attacker-influenced input is a
-      remote-code-execution primitive. The Zakuro wire format is being
-      migrated off cloudpickle (zakuro#117); until that lands, every call
-      site that deserialises an untrusted byte stream must go through the
-      vetted `zakuro.wire.safe_loads` adapter, not raw cloudpickle.
+      remote-code-execution primitive (CWE-502). Do not add a new call site.
+      The only accepted sites are the dispatch RPC's, which run under the
+      documented trust model (operator-controlled worker, pinned-cert QUIC
+      channel — see SECURITY.md) and carry a justified
+      `# nosemgrep: sakura.deserialization.cloudpickle-loads-untrusted`.
+      Eliminating the primitive entirely is tracked in zakuro#117.
     metadata:
       category: security
       cwe: "CWE-502: Deserialization of Untrusted Data"
       references:
         - https://docs.python.org/3/library/pickle.html#module-pickle
         - https://github.com/zakuro-ai/zakuro/issues/117
-    patterns:
-      - pattern-either:
-          - pattern: cloudpickle.loads(...)
-          - pattern: pickle.loads(...)
-          - pattern: cloudpickle.load(...)
-          - pattern: pickle.load(...)
-      - pattern-not-inside: |
-          # type: ignore[zakuro-safe-pickle]
-          ...
-      - pattern-not-inside: |
-          def safe_loads(...):
-              ...
+    # Accepted call sites are suppressed inline with
+    # `# nosemgrep: sakura.deserialization.cloudpickle-loads-untrusted`
+    # (semgrep-native). Do NOT add a `pattern-not-inside` against a comment
+    # line to express exceptions: semgrep matches the AST and strips comments,
+    # so such a clause collapses to a bare `...` that matches every enclosing
+    # context — which silently disabled this entire rule until it was removed.
+    pattern-either:
+      - pattern: cloudpickle.loads(...)
+      - pattern: pickle.loads(...)
+      - pattern: cloudpickle.load(...)
+      - pattern: pickle.load(...)
 
   - id: sakura.subprocess.shell-true
     severity: WARNING
