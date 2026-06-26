@@ -4,12 +4,8 @@ name: security-scan
 # Maturin / Rust-extension surface (no container images yet, so no trivy
 # image lane — added if/when sakura ships an image).
 #
-# All lanes here are intentionally REPORT-ONLY on introduction. They run on
-# every push and PR and upload SARIF to the code-scanning view, but a finding
-# does not fail the job — `|| true` / `exit-code: "0"` keep the per-commit
-# status green so the commit list / branch protection isn't permanently red.
-# Each lane carries an inline ratchet condition for the cleanup sprint that
-# flips it back to strict.
+# All lanes are now strict (exit non-zero on findings). The report-only
+# phase is complete — vulnerabilities cleared in PR #124.
 
 on:
   push:
@@ -43,15 +39,11 @@ jobs:
             > requirements.audit.txt
       - name: Install pip-audit
         run: pipx install pip-audit
-      - name: Run pip-audit (report-only)
-        # `|| true` keeps the JOB green so the commit-status surface
-        # isn't permanently red on a master push. Findings still print
-        # to the job log. Drop `|| true` (and add --strict back if you
-        # want it) once Dependabot rollups have cleared the catalogue.
+      - name: Run pip-audit
         run: |
           pip-audit \
             --requirement requirements.audit.txt \
-            --vulnerability-service osv || true
+            --vulnerability-service osv
       - name: Upload audit input on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -62,12 +54,6 @@ jobs:
 
   osv-scanner:
     name: osv-scanner (lockfiles)
-    # Report-only. The OSV database updates daily, so the same lockfile
-    # that was green on a PR run can flip red on the next master push
-    # with no code change. Drop the reusable workflow (which doesn't
-    # accept continue-on-error on the caller) and install the binary
-    # directly so we can pipe through `|| true` and keep the job green
-    # while still uploading SARIF.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -86,8 +72,7 @@ jobs:
             --lockfile=Cargo.lock \
             --recursive \
             --format=sarif \
-            --output=osv-scanner.sarif \
-            || true
+            --output=osv-scanner.sarif
       - name: Upload SARIF
         if: always() && hashFiles('osv-scanner.sarif') != ''
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4
@@ -106,19 +91,15 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
       - name: Install cargo-audit
         run: cargo install --locked cargo-audit
-      - name: Run cargo-audit (report-only)
-        # Drop `|| true` once the resolved crates carry no advisories.
-        run: cargo audit || true
+      - name: Run cargo-audit
+        run: cargo audit
 
   trivy-fs:
     name: trivy fs (repo)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - name: Run trivy fs (report-only)
-        # exit-code: "0" so the action does not fail the job on findings;
-        # SARIF still uploads to the code-scanning view. Drop this once
-        # the repo carries no HIGH/CRITICAL trivy fs findings.
+      - name: Run trivy fs
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8  # v0.36.0
         with:
           scan-type: fs
@@ -126,7 +107,7 @@ jobs:
           format: sarif
           output: trivy-fs.sarif
           severity: HIGH,CRITICAL
-          exit-code: "0"
+          exit-code: "1"
           ignore-unfixed: true
       - name: Upload SARIF
         if: always() && hashFiles('trivy-fs.sarif') != ''
