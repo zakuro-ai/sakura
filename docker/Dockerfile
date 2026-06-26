@@ -55,6 +55,7 @@ FROM base AS production
 
 # s6-overlay's /init entrypoint requires root to supervise services.
 # Individual services (redis) drop to the foo user via s6-setuidgid.
+# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root
 USER root
 
 # s6-overlay
@@ -74,5 +75,5 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/${TASK}/type && \
 WORKDIR /workspace
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python3 -c "import sakura" && redis-cli ping | grep -q PONG || exit 1
-# nosemgrep: dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
+# nosemgrep: dockerfile.security.missing-user-entrypoint.missing-user-entrypoint,dockerfile.security.last-user-is-root.last-user-is-root
 ENTRYPOINT ["/init"]
