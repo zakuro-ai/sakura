@@ -61,6 +61,45 @@ jobs:
       - name: Pytest (full suite)
         run: .venv/bin/pytest tests/ -v --ignore=tests/bench -m 'not gpu'
 
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        with:
+          python-version: "3.12"
+      - name: Install build deps
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip maturin pytest pytest-cov
+      - name: Build + install via maturin develop
+        run: |
+          source .venv/bin/activate
+          maturin develop --release -E huggingface
+      # Coverage is enforced on the FULL test suite (not just tests/wire/) so the
+      # threshold reflects real package coverage. Runs independently of the
+      # `python` matrix job. Baseline ~76% (branch coverage) at introduction
+      # (closes #101).
+      - name: Pytest with coverage
+        run: |
+          .venv/bin/pytest tests/ \
+            --cov=sakura \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --cov-fail-under=70
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
+
   mypy:
     name: mypy (type check)
     runs-on: ubuntu-latest
