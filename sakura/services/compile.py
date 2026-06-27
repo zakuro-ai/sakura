@@ -13,6 +13,7 @@ import os
 import time
 from typing import Literal, Optional
 
+from sakura._optional import load
 from sakura.events import OnTrainBegin, OnTrainStepBegin
 from sakura.service import BaseService
 
@@ -41,7 +42,7 @@ class Compile(BaseService):
         self.first_step_secs: Optional[float] = None
 
     def on_train_begin(self, event: OnTrainBegin) -> None:
-        import torch
+        torch = load("torch", extra="training")
 
         os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", self._cache_dir)
         # Mark as "attempted" before the compile call — even if torch.compile

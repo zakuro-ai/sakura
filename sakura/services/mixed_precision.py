@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional, Union
 
+from sakura._optional import load
 from sakura.events import OnOptimizerStep, OnTrainBegin, OnTrainEnd, OnTrainStepBegin
 from sakura.service import BaseService
 
@@ -48,7 +49,7 @@ class MixedPrecision(BaseService):
         pass
 
     def on_train_begin(self, event: OnTrainBegin) -> None:
-        import torch
+        torch = load("torch", extra="training")
 
         # Determine device + actual dtype.
         device_type = self._device_type_from(event.model)
@@ -119,7 +120,7 @@ class MixedPrecision(BaseService):
         if self._scaler is not None:
             self._scaler.unscale_(opt)
         if self._grad_clip is not None:
-            import torch
+            torch = load("torch", extra="training")
 
             params = []
             for group in opt.param_groups:
@@ -163,7 +164,7 @@ class MixedPrecision(BaseService):
             return "cpu"
 
     def _resolve_dtype(self, device_type: str):
-        import torch
+        torch = load("torch", extra="training")
         if self._dtype == "auto":
             if torch.cuda.is_available():
                 cap = torch.cuda.get_device_capability()

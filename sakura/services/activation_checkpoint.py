@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Literal, Union
 
+from sakura._optional import load
 from sakura.events import OnTrainBegin
 from sakura.service import BaseService
 
@@ -29,7 +30,7 @@ class ActivationCheckpoint(BaseService):
         self.wrapped_count = 0
 
     def on_train_begin(self, event: OnTrainBegin):
-        import torch.utils.checkpoint as _ck
+        _ck = load("torch.utils.checkpoint", extra="training")
 
         target_modules = []
         for module in event.model.modules():

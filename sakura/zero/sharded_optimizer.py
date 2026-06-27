@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from sakura._optional import load
+
 
 class ShardedOptimizer:
     """ZeRO stage-1 sharded optimizer wrapper.
@@ -31,7 +33,7 @@ class ShardedOptimizer:
         *,
         process_group: Optional[Any] = None,
     ):
-        import torch.distributed as dist
+        dist = load("torch.distributed", extra="training")
         self._opt = optimizer
         self._pg = process_group
         if dist.is_available() and dist.is_initialized():
