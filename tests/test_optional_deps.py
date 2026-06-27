@@ -93,3 +93,44 @@ def test_sharded_optimizer_without_torch_raises_install_hint():
     )
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     assert "RAISED_HINT" in proc.stdout
+
+
+def test_activation_checkpoint_without_torch_raises_install_hint():
+    proc = _run_without_torch(
+        "from sakura.services import ActivationCheckpoint\n"
+        "svc = ActivationCheckpoint(target_types=(object,))\n"
+        "try:\n"
+        "    svc.on_train_begin(object())\n"
+        "except ModuleNotFoundError as e:\n"
+        "    assert 'sakura-ml[training]' in str(e), str(e)\n"
+        "    print('RAISED_HINT')\n"
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "RAISED_HINT" in proc.stdout
+
+
+def test_async_checkpoint_writer_without_torch_raises_install_hint():
+    proc = _run_without_torch(
+        "from sakura.services.async_checkpoint import _torch_save_writer\n"
+        "try:\n"
+        "    _torch_save_writer({}, '/tmp/x')\n"
+        "except ModuleNotFoundError as e:\n"
+        "    assert 'sakura-ml[training]' in str(e), str(e)\n"
+        "    print('RAISED_HINT')\n"
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "RAISED_HINT" in proc.stdout
+
+
+def test_mixed_precision_without_torch_raises_install_hint():
+    proc = _run_without_torch(
+        "from sakura.services import MixedPrecision\n"
+        "svc = MixedPrecision()\n"
+        "try:\n"
+        "    svc.on_train_begin(object())\n"
+        "except ModuleNotFoundError as e:\n"
+        "    assert 'sakura-ml[training]' in str(e), str(e)\n"
+        "    print('RAISED_HINT')\n"
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "RAISED_HINT" in proc.stdout

@@ -33,10 +33,7 @@ class ShardedOptimizer:
         *,
         process_group: Optional[Any] = None,
     ):
-        # torch is an optional ("training") dependency; surface a friendly
-        # install hint instead of a bare ModuleNotFoundError.
-        load("torch", extra="training")
-        import torch.distributed as dist
+        dist = load("torch.distributed", extra="training")
         self._opt = optimizer
         self._pg = process_group
         if dist.is_available() and dist.is_initialized():
