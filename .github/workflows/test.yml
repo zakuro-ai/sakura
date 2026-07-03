@@ -57,9 +57,42 @@ jobs:
       - name: Build + install via maturin develop
         run: |
           source .venv/bin/activate
-          maturin develop --release
+          maturin develop --release -E training
       - name: Pytest (full suite)
         run: .venv/bin/pytest tests/ -v --ignore=tests/bench -m 'not gpu'
+
+  bare-install:
+    # Regression guard for #71: a core install (no extras) must import and run
+    # the dispatch / runtime / wire surface with NO PyTorch present. If any
+    # core module grows an eager torch import, this lane goes red.
+    name: Bare install (no ML stack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        with:
+          python-version: "3.12"
+      - name: Install build deps
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip maturin pytest
+      - name: Build + install via maturin develop (no extras)
+        run: |
+          source .venv/bin/activate
+          maturin develop --release
+      - name: Assert torch is NOT installed
+        run: |
+          if .venv/bin/python -c "import torch" 2>/dev/null; then
+            echo "torch is installed in a bare environment — extras leaked into core deps"; exit 1
+          fi
+      - name: Smoke import + dispatch/optional-deps tests
+        run: |
+          .venv/bin/python -c "import sakura; from sakura.dispatch import RemoteDispatcher, LocalDispatcher; print('import ok')"
+          .venv/bin/pytest tests/dispatch tests/wire tests/test_optional_deps.py -v -m 'not gpu'
 
   coverage:
     name: Coverage

@@ -12,8 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-import torch
-import torch.distributed as dist
+from sakura._optional import load
 
 
 class ShardedOptimizer:
@@ -30,10 +29,11 @@ class ShardedOptimizer:
 
     def __init__(
         self,
-        optimizer: torch.optim.Optimizer,
+        optimizer: Any,
         *,
         process_group: Optional[Any] = None,
     ):
+        dist = load("torch.distributed", extra="training")
         self._opt = optimizer
         self._pg = process_group
         if dist.is_available() and dist.is_initialized():
@@ -57,7 +57,7 @@ class ShardedOptimizer:
                 idx += 1
         return owners
 
-    def _all_params(self) -> list[torch.nn.Parameter]:
+    def _all_params(self) -> list:
         out = []
         for group in self._opt.param_groups:
             out.extend(group["params"])
@@ -69,9 +69,11 @@ class ShardedOptimizer:
             # Single-rank passthrough.
             return self._opt.step(closure)
 
+        import torch.distributed as dist
+
         # Save grads of params NOT owned by this rank, zero them so the local
         # optimizer doesn't update those params, then restore after step.
-        saved_grads: dict[int, Optional[torch.Tensor]] = {}
+        saved_grads: dict[int, Any] = {}
         for p in self._all_params():
             if self._param_owner[id(p)] != self._rank:
                 saved_grads[id(p)] = p.grad

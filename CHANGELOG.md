@@ -11,6 +11,17 @@ pre-release spelling (`1.0.0a1`); the Rust crate uses the SemVer equivalent
 
 ## [Unreleased]
 
+### Changed
+
+- **ML framework dependencies are now optional extras (BREAKING for installs).**
+  `pip install sakura-ml` no longer pulls PyTorch — the base install is the
+  dispatch / runtime / wire surface only. Install the training stack via
+  `sakura-ml[training]` (torch / torchvision / lightning), `sakura-ml[huggingface]`,
+  or `sakura-ml[bench]`. Using a training feature without its extra now raises a
+  `ModuleNotFoundError` with the exact `pip install` hint, via the new
+  `sakura._optional.load` helper. A `bare-install` CI lane guards the core
+  install against regressing to require torch. (#71)
+
 ### Fixed
 
 - **Security:** the Semgrep `cloudpickle-loads-untrusted` rule was silently

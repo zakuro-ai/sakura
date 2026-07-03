@@ -14,13 +14,14 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Literal, Optional, Union
 
+from sakura._optional import load
 from sakura.dispatch.base import Dispatcher, Future
 from sakura.events import OnEpochEnd, OnTrainEnd
 from sakura.service import BaseService
 
 
 def _torch_save_writer(state, path):
-    import torch
+    torch = load("torch", extra="training")
     torch.save(state, path)
     return {"path": str(path)}
 
