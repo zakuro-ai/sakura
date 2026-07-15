@@ -22,6 +22,15 @@ pre-release spelling (`1.0.0a1`); the Rust crate uses the SemVer equivalent
   `sakura._optional.load` helper. A `bare-install` CI lane guards the core
   install against regressing to require torch. (#71)
 
+### Fixed
+
+- **Security:** the Semgrep `cloudpickle-loads-untrusted` rule was silently
+  disabled — its `pattern-not-inside` clause matched a comment line, which
+  semgrep strips, collapsing the clause to a bare `...` that excluded every
+  context. The blocking lane (#89) therefore caught no cloudpickle call sites.
+  Removed the broken clause so the rule actually fires; accepted sites stay
+  suppressed via inline `# nosemgrep`. (#89)
+
 ## [1.0.0a1] — 2026-05-09
 
 v1.0 is a clean break from v0.1.x. The library was rebuilt around an **event
