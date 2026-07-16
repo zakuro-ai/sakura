@@ -15,11 +15,17 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # GitHub-hosted runners are blocked org-wide by a billing hold, and
+  # ubuntu-latest's 2-core/7GB shared runner made maturin --release builds
+  # of the ML stack (torch/huggingface) and full-suite coverage runs
+  # single-hour jobs. Self-hosted ARC scale set (20-core gha-runner-cpu)
+  # fixes both.
+  HOME: /home/runner
 
 jobs:
   rust:
     name: Rust
-    runs-on: ubuntu-latest
+    runs-on: cpu
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
@@ -36,7 +42,7 @@ jobs:
 
   python:
     name: Python ${{ matrix.python }}
-    runs-on: ubuntu-latest
+    runs-on: cpu
     strategy:
       fail-fast: false
       matrix:
@@ -66,7 +72,7 @@ jobs:
     # the dispatch / runtime / wire surface with NO PyTorch present. If any
     # core module grows an eager torch import, this lane goes red.
     name: Bare install (no ML stack)
-    runs-on: ubuntu-latest
+    runs-on: cpu
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
@@ -96,7 +102,7 @@ jobs:
 
   coverage:
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: cpu
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
@@ -135,7 +141,7 @@ jobs:
 
   mypy:
     name: mypy (type check)
-    runs-on: ubuntu-latest
+    runs-on: cpu
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
