@@ -9,7 +9,7 @@ description = "Sakura: SOTA training services for PyTorch DDP / Lightning / Hugg
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.10"
-authors = [{ name = "ZakuroAI", email = "git@zakuro.ai" }]
+authors = [{ name = "ZakuroAI", email = "git@zakuro-ai.com" }]
 dependencies = [
     "tqdm>=4.68.1",
     "numpy",
