@@ -139,7 +139,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         resumed_from = spec.resume_from.uri if spec.resume_from else None
 
         with MetricsSink(out.metrics_path) as metrics:
-            _deterministic(resolved.spec.seed)
+            _deterministic(resolved.spec.seed, getattr(backend, "deterministic_algorithms", True))
             result = backend.train(resolved, data, out, metrics, resume_checkpoint)
 
         artifacts: list[Artifact] = []
@@ -209,6 +209,64 @@ def cmd_presets(args: argparse.Namespace) -> int:
     return 0
 
 
+def _delivered_artifact(run_dir: Path, fmt: str | None) -> tuple[dict[str, Any], Artifact]:
+    """`(report, artifact)` for a finished run: the requested format, else
+    the first one exported."""
+    report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    if report.get("status") != "done":
+        raise ValueError(f"run status is {report.get('status')!r}, not 'done': {report.get('error')}")
+    entries = report.get("artifacts") or []
+    if fmt:
+        entry = next((e for e in entries if e["format"] == fmt), None)
+        if entry is None:
+            raise ValueError(f"no {fmt!r} artifact in this run (have: {[e['format'] for e in entries]})")
+    elif entries:
+        entry = entries[0]
+    else:
+        raise ValueError("this run has no artifacts to predict from")
+    artifact = Artifact(path=run_dir / entry["path"], format=entry["format"],
+                        sha256=entry["sha256"], bytes=entry["bytes"])
+    return report, artifact
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Answer predictions for one delivered run, one JSON line in, one JSON
+    line out, until stdin closes -- the runner's warm try-it worker.
+
+    Request: ``{"input": "<path to inputs JSON>"}`` or ``{"file": "<path>"}``
+    (the same two shapes as ``predict --input`` / ``--file``). The model is
+    loaded on the first request and kept (the backends memoise their
+    loaders), so only that one pays the load. Library chatter goes to stderr;
+    stdout carries nothing but answers, so the protocol cannot desync.
+    """
+    out = sys.stdout
+    try:
+        report, artifact = _delivered_artifact(Path(args.run_dir), args.format)
+        backend = load_backend(report["backend"])
+    except Exception as exc:
+        out.write(json.dumps({"error": f"{type(exc).__name__}: {exc}"}) + "\n")
+        out.flush()
+        return 1
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        try:
+            req = json.loads(line)
+            if "input" in req:
+                inputs: Any = json.loads(Path(req["input"]).read_text(encoding="utf-8"))
+            elif "file" in req:
+                inputs = {"file": str(req["file"])}
+            else:
+                raise ValueError("a request needs 'input' or 'file'")
+            with contextlib.redirect_stdout(sys.stderr):
+                result = backend.predict(artifact, inputs)
+            out.write(json.dumps(result) + "\n")
+        except Exception as exc:
+            out.write(json.dumps({"error": f"{type(exc).__name__}: {exc}"}) + "\n")
+        out.flush()
+    return 0
+
+
 def cmd_predict(args: argparse.Namespace) -> int:
     """Load the delivered artifact from RUN_DIR (a ``run --out`` directory)
     and print one JSON object on stdout in the per-task shape of CONTRACTS
@@ -216,23 +274,7 @@ def cmd_predict(args: argparse.Namespace) -> int:
     report.json), generically -- this file never imports a backend itself."""
     run_dir = Path(args.run_dir)
     try:
-        report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
-        if report.get("status") != "done":
-            raise ValueError(f"run status is {report.get('status')!r}, not 'done': {report.get('error')}")
-
-        entries = report.get("artifacts") or []
-        if args.format:
-            entry = next((e for e in entries if e["format"] == args.format), None)
-            if entry is None:
-                raise ValueError(f"no {args.format!r} artifact in this run (have: "
-                                  f"{[e['format'] for e in entries]})")
-        elif entries:
-            entry = entries[0]
-        else:
-            raise ValueError("this run has no artifacts to predict from")
-
-        artifact = Artifact(path=run_dir / entry["path"], format=entry["format"],
-                             sha256=entry["sha256"], bytes=entry["bytes"])
+        report, artifact = _delivered_artifact(run_dir, args.format)
 
         if args.input and args.file:
             raise ValueError("pass --input or --file, not both")
@@ -282,11 +324,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_predict.add_argument("--format", default=None, help="which exported format to use (default: first)")
     p_predict.set_defaults(func=cmd_predict)
 
+    p_serve = sub.add_parser("serve", help="answer predictions for a delivered run, JSON lines on stdin/stdout")
+    p_serve.add_argument("run_dir")
+    p_serve.add_argument("--format", default=None, help="which exported format to use (default: first)")
+    p_serve.set_defaults(func=cmd_serve)
+
     return parser
 
 
-def _deterministic(seed: int) -> None:
+def _deterministic(seed: int, algorithms: bool = True) -> None:
     """Seed every RNG and ask torch for deterministic kernels.
+
+    ``algorithms=False`` (a backend's ``deterministic_algorithms = False``) keeps the seeds
+    and cuDNN determinism but leaves ``torch.use_deterministic_algorithms`` off. CTC training
+    needs that: with it on, PyTorch routes CTC loss to cuDNN, whose backward returns NaN for
+    a whole batch when one sample is unalignable (it ignores ``zero_infinity``).
 
     `warn_only=True`: an op with no deterministic implementation warns
     instead of failing the job -- the replay test, not a crash, is what says
@@ -309,7 +361,8 @@ def _deterministic(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    torch.use_deterministic_algorithms(True, warn_only=True)
+    if algorithms:
+        torch.use_deterministic_algorithms(True, warn_only=True)
 
 
 def main(argv: list[str] | None = None) -> int:

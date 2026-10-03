@@ -194,3 +194,41 @@ def test_a_backend_that_prints_cannot_corrupt_the_predict_json(tmp_path, monkeyp
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {"boxes": [], "width": 4, "height": 4}
     assert "Loading model.onnx" in captured.err
+
+
+
+def test_serve_loads_once_and_answers_each_line(tmp_path, monkeypatch, capsys):
+    import io
+
+    run_dir = tmp_path / "run"
+    _write_report(run_dir)
+    loads = []
+
+    class CountingBackend:
+        def predict(self, artifact, inputs):
+            print("library chatter on stdout")  # must not reach the answers
+            return {"echo": inputs}
+
+    import sakura.atelier.__main__ as cli_module
+    monkeypatch.setattr(cli_module, "load_backend", lambda name: loads.append(name) or CountingBackend())
+    a = tmp_path / "a.json"
+    a.write_text(json.dumps({"x": 1}))
+    monkeypatch.setattr("sys.stdin", io.StringIO(
+        json.dumps({"input": str(a)}) + "\n" + json.dumps({"file": "/tmp/clip.wav"}) + "\n"
+        + json.dumps({"nothing": 1}) + "\n"))
+    assert cli_module.main(["serve", str(run_dir)]) == 0
+    answers = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert answers[0] == {"echo": {"x": 1}}
+    assert answers[1] == {"echo": {"file": "/tmp/clip.wav"}}
+    assert "error" in answers[2]
+    assert len(loads) == 1
+
+
+def test_serve_on_a_failed_run_says_why_and_stops(tmp_path, capsys):
+    import sakura.atelier.__main__ as cli_module
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "report.json").write_text(json.dumps({"status": "failed", "error": "boom"}))
+    assert cli_module.main(["serve", str(run_dir)]) == 1
+    assert "not 'done'" in json.loads(capsys.readouterr().out)["error"]

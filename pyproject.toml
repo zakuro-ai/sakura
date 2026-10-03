@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sakura-ml"
-version = "1.0.0"
+version = "1.1.0"
 description = "Sakura: SOTA training services for PyTorch DDP / Lightning / HuggingFace Trainer."
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -105,6 +105,10 @@ module = [
     "datasets.*",
     # atelier backends, each imported only inside its own venv
     "ludwig.*",
+    "asr_deepspeech",
+    "asr_deepspeech.*",
+    "safetensors",
+    "safetensors.*",
     "ultralytics.*",
     "tabpfn.*",
     "peft.*",

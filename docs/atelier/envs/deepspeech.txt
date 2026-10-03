@@ -1,0 +1,14 @@
+# sakura/atelier/backends/deepspeech.py -- speech_recognition / deepspeech2.
+#
+# uv venv .venv --python 3.11
+# uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cu121
+# uv pip install --python .venv/bin/python -r docs/atelier/envs/deepspeech.txt
+#
+# The trainer runs on the Sakura 1.0 runtime (sakura-ml itself, this repo). Pin asr-deepspeech
+# to a released tag/commit before shipping to customers; `master` is for development only.
+
+asr-deepspeech @ git+https://github.com/zakuro-ai/asr@master
+safetensors>=0.4
+soundfile
+librosa
+pandas

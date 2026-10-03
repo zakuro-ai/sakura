@@ -191,7 +191,7 @@ Five execution states cover every dispatching combination: in-thread (synchronou
 | `Compile` | 20 | train_begin | `torch.compile` with on-disk cache |
 | `ZeRO1` | 30 | train_begin, optimizer_step | optimizer-state sharding (cyclic dealing across ranks; single-rank passthrough). Multi-rank correctness verified against single-rank reference under both **gloo (CPU)** and **NCCL (2× GPU)**. |
 | `AsyncEval` | 80 | epoch_end | dispatch eval to worker; lazy future drain |
-| `AsyncCheckpoint` | 85 | epoch_end | dispatch state-dict write; modes: epoch / N / best |
+| `AsyncCheckpoint` | 85 | epoch_end | dispatch state-dict write; modes: epoch / N / best / `every_seconds=T` (time-budgeted); `keep=N` retains the N newest files |
 
 Lower priority runs earlier. Service exceptions are isolated — one service crashing emits an `OnError` event but doesn't block the others.
 
@@ -216,6 +216,7 @@ These hooks are honored by the bench harness's raw-pytorch loop. Lightning / HF 
 |---|---|---|
 | `InThreadDispatcher` | — | Tests / debug; runs synchronously |
 | `ThreadDispatcher` | — | In-process Python thread; real parallelism for tensor ops (torch releases the GIL) without subprocess pickle cost. Best for `AsyncEval` / `AsyncCheckpoint` when isolation isn't needed. |
+| `ProcessDispatcher` | — | Persistent spawned worker process; **no GIL contention with a launch-bound training loop** and zero-copy tensor hand-off through shared memory. Best for `AsyncCheckpoint` of large state dicts and for evaluation with Python-heavy post-processing (decoding, metrics). Measured: a checkpoint thread slowed concurrent training epochs 2.4x; the process worker did not. |
 | `LocalDispatcher` | auto | Auto-spawns localhost `sakura-worker` subprocess; full GIL isolation, ~50ms+ pickle overhead per round-trip |
 | `RemoteDispatcher` | `quic://host:port` | Existing remote worker daemon |
 | `ZakuroDispatcher` | — | Wraps `zakuro.Compute` for users with existing Zakuro infra |

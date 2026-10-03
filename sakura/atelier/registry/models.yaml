@@ -49,3 +49,11 @@ lfm2-350m:
   exports: [gguf, safetensors, mlx]  # mlx only where mlx-lm imports (Apple silicon)
   source: huggingface://LiquidAI/LFM2-350M
   license: LFM-Open-License-v1.0  # track E2; flag before anything ships to customers
+
+deepspeech2:
+  backend: deepspeech
+  tasks: [speech_recognition]
+  exports: [safetensors]
+  source: pip://asr-deepspeech  # DeepSpeech2 (conv + bidirectional GRU/LSTM, CTC), trained from scratch
+  # Trained on the Sakura 1.0 runtime (async eval, process-isolated checkpoint writes, mixed precision).
+  license: MIT

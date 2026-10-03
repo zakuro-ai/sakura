@@ -38,3 +38,16 @@ for side-by-side examples. To stay on the old API, pin `sakura-ml<1.0`.
 - Three framework adapters (Lightning, HuggingFace, raw PyTorch DDP) over one runtime.
 - `Telemetry(output=path)`: one JSON line per event, a single source of truth for benchmarking.
 - Rust transport: `sakura-wire` over QUIC, the same wire format from localhost to LAN/WAN.
+## [1.1.0]
+
+### Added
+- `sakura.dispatch.ProcessDispatcher`: a persistent worker process fed through shared memory
+  (one flat buffer per message), so background work no longer contends for the training loop's GIL.
+- `AsyncCheckpoint(every_seconds=..., max_pending=...)`: time-budgeted checkpoints and backpressure
+  (skip instead of queueing multi-hundred-MB states behind a slow disk).
+- `sakura.atelier`: `speech_recognition` task, `deepspeech2` backend (asr-deepspeech on the Sakura
+  runtime), `asr_manifest` data format with tar-shard clip addressing, `speech_recognition/ctc-fast@1`.
+
+### Fixed
+- `AsyncCheckpoint(keep=N)` is now enforced; it was accepted and ignored, so checkpoints accumulated.
+

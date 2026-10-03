@@ -60,14 +60,33 @@ def test_mlx_export_fails_precisely_on_a_host_without_mlx(tmp_path):
         backend_mod.BACKEND.export(result=type("R", (), {"model": fitted})(), fmt="mlx", out=out)
 
 
-def test_runtime_eval_only_knows_how_to_rescore_gguf(tmp_path):
+def test_safetensors_is_rescored_through_transformers(tmp_path, monkeypatch):
     out = RunDir(tmp_path / "run").ensure()
     artifact = Artifact(path=out.artifacts / "model.safetensors", format="safetensors", sha256="x", bytes=1)
     artifact.path.write_bytes(b"x")
+    answers = {"1+1=": "2", "2+2=": "5"}
+    monkeypatch.setattr(backend_mod, "_hf_generate", lambda d, prompt, n: answers[prompt])
+    data = type("D", (), {"validation": [{"prompt": "1+1=", "completion": "2"},
+                                         {"prompt": "2+2=", "completion": "4"}]})()
+    ev = backend_mod.BACKEND.runtime_eval(artifact, data=data)
+    assert (ev.runtime, ev.value, ev.n) == ("transformers", 0.5, 2)
+
+
+def test_mlx_off_apple_silicon_reports_why(tmp_path):
+    # mlx-lm genuinely does not install on this Linux CI venv: the real
+    # ImportError path.
+    out = RunDir(tmp_path / "run").ensure()
+    artifact = Artifact(path=out.artifacts / "model.mlx", format="mlx", sha256="x", bytes=1)
+    data = type("D", (), {"validation": [{"prompt": "1+1=", "completion": "2"}]})()
+    ev = backend_mod.BACKEND.runtime_eval(artifact, data=data)
+    assert ev.value is None and ev.runtime == "mlx-lm" and "not importable" in ev.reason
+
+
+def test_no_validation_examples_is_no_score_not_zero(tmp_path):
+    out = RunDir(tmp_path / "run").ensure()
+    artifact = Artifact(path=out.artifacts / "model.safetensors", format="safetensors", sha256="x", bytes=1)
     ev = backend_mod.BACKEND.runtime_eval(artifact, data=type("D", (), {"validation": []})())
-    assert ev.value is None
-    assert ev.matches_training is None
-    assert "only re-scores gguf" in ev.reason
+    assert ev.value is None and "no validation examples" in ev.reason
 
 
 def test_runtime_eval_gguf_without_llama_cpp_python_reports_why(tmp_path):

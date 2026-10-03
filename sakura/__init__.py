@@ -11,7 +11,7 @@ Users on v0.1.x should pin `sakura-ml<1.0` if they're not migrating to the
 new SakuraRuntime + Adapter + Service surface.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __build__ = "2026-05-09T00:00:00Z"
 
 from sakura.adapters import Adapter, DDPAdapter, HFAdapter, LightningAdapter

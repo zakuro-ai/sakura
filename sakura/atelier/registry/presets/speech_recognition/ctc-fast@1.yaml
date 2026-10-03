@@ -1,0 +1,26 @@
+# speech_recognition/ctc-fast@1 -- immutable once released (CONTRACTS §1.1).
+# DeepSpeech2 (3 x 512 bidirectional GRU) trained from scratch with CTC; sized for a ~7 GB
+# usable GPU and character-level transcripts (any alphabet: the vocabulary comes from the data).
+hyperparameters:
+  rnn_type: nn.GRU
+  rnn_hidden_size: 512
+  rnn_hidden_layers: 3
+  bidirectional: true
+  context: 20
+  sample_rate: 16000
+  window_size: 0.02
+  window_stride: 0.01
+  spec_augment: false
+  epochs: 20
+  batch_size: 32
+  num_workers: 4
+  learning_rate: 0.0003
+  weight_decay: 0.00001
+  max_grad_norm: 400       # CTC sum loss on long utterances explodes without clipping
+  betas: [0.9, 0.999]
+  lr_step: 10
+  lr_gamma: 0.99
+  mixed_precision: true
+  dispatch: process        # Sakura ProcessDispatcher: no GIL contention with training
+  async_eval: true
+  checkpoint_every_s: 60   # resume checkpoints at most once a minute
