@@ -1,0 +1,11 @@
+# text_generation/lora-fast@1 -- immutable once released (CONTRACTS §1.1).
+# Placeholder values for track E2's peft (LoRA) backend (lfm2-350m); not
+# tuned here -- E2 owns backends/peft.py and may report needed changes.
+hyperparameters:
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  epochs: 1
+  batch_size: 2
+  learning_rate: 0.0002
+  max_seq_length: 512

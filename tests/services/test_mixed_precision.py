@@ -161,3 +161,34 @@ class TestMixedPrecision:
 
         assert handled is True
         assert opt.stepped == 1  # exactly one step per batch — no double
+
+
+class TestBf16HardwareGate:
+    """bf16 must be hardware-gated: pre-Ampere GPUs have no native bf16 and
+    autocast emulates it ~16x slower (measured on a 2080 Ti), so we fall back
+    to fp16 (which still hits the tensor cores)."""
+
+    def test_bf16_falls_back_to_fp16_on_pre_ampere(self, monkeypatch):
+        # Turing sm_75 — is_bf16_supported() lies (counts emulation), so the
+        # gate must use the compute capability directly.
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, **k: (7, 5))
+        s = MixedPrecision(dtype="bf16")
+        with pytest.warns(UserWarning, match="bf16"):
+            assert s._resolve_dtype("cuda") == torch.float16
+
+    def test_bf16_kept_on_bf16_capable_gpu(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, **k: (8, 0))
+        s = MixedPrecision(dtype="bf16")
+        assert s._resolve_dtype("cuda") == torch.bfloat16
+
+    def test_auto_picks_fp16_on_pre_ampere(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, **k: (7, 5))
+        s = MixedPrecision(dtype="auto")
+        assert s._resolve_dtype("cuda") == torch.float16
+
+    def test_fp16_is_always_fp16(self):
+        # No CUDA needed: fp16 never depends on bf16 support.
+        assert MixedPrecision(dtype="fp16")._resolve_dtype("cuda") == torch.float16

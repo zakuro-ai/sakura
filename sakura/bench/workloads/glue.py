@@ -8,18 +8,20 @@ Stub for now — real implementation in v1.x with the perf runner.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from sakura.bench.harness import Workload
 
 
-def _make_model():
+def _make_model() -> None:
     raise NotImplementedError("glue.make_workload is a perf-tier stub for v1.x.")
 
 
-def _make_loader():
+def _make_loader() -> None:
     raise NotImplementedError("glue loader is a stub.")
 
 
-def _eval_fn(model, loader):
+def _eval_fn(model: Any, loader: Any) -> dict[str, float]:
     raise NotImplementedError("glue eval_fn is a stub.")
 
 

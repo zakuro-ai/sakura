@@ -14,6 +14,8 @@ sakura_wire = pytest.importorskip("sakura_wire")
 
 from sakura.wire import Dispatcher, TlsConfig, WorkerSupervisor
 
+pytestmark = pytest.mark.wire
+
 HANDLER_ECHO = 0xDEAD
 DTYPE_F32 = 0
 DEVICE_CPU = 0

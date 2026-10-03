@@ -10,9 +10,10 @@ adds the cyclic dealing + per-shard step + all-rank broadcast.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional, cast
 
-from sakura._optional import load
+import torch
+import torch.distributed as dist
 
 
 class ShardedOptimizer:
@@ -29,11 +30,10 @@ class ShardedOptimizer:
 
     def __init__(
         self,
-        optimizer: Any,
+        optimizer: torch.optim.Optimizer,
         *,
         process_group: Optional[Any] = None,
     ):
-        dist = load("torch.distributed", extra="training")
         self._opt = optimizer
         self._pg = process_group
         if dist.is_available() and dist.is_initialized():
@@ -44,12 +44,12 @@ class ShardedOptimizer:
             self._rank = 0
         self._param_owner = self._partition_params()
 
-    def _partition_params(self) -> dict:
+    def _partition_params(self) -> dict[int, int]:
         """Cyclic dealing: param i -> rank (i % world_size).
 
         Returns a dict mapping id(param) -> owning rank.
         """
-        owners = {}
+        owners: dict[int, int] = {}
         idx = 0
         for group in self._opt.param_groups:
             for p in group["params"]:
@@ -57,23 +57,21 @@ class ShardedOptimizer:
                 idx += 1
         return owners
 
-    def _all_params(self) -> list:
+    def _all_params(self) -> list[torch.nn.Parameter]:
         out = []
         for group in self._opt.param_groups:
             out.extend(group["params"])
         return out
 
-    def step(self, closure=None):
+    def step(self, closure: Optional[Callable[[], Any]] = None) -> Any:
         """Local step on this rank's shard, then broadcast updated weights."""
         if self._world_size <= 1:
             # Single-rank passthrough.
             return self._opt.step(closure)
 
-        import torch.distributed as dist
-
         # Save grads of params NOT owned by this rank, zero them so the local
         # optimizer doesn't update those params, then restore after step.
-        saved_grads: dict[int, Any] = {}
+        saved_grads: dict[int, Optional[torch.Tensor]] = {}
         for p in self._all_params():
             if self._param_owner[id(p)] != self._rank:
                 saved_grads[id(p)] = p.grad
@@ -94,17 +92,17 @@ class ShardedOptimizer:
 
         return result
 
-    def zero_grad(self, set_to_none: bool = True):
+    def zero_grad(self, set_to_none: bool = True) -> None:
         return self._opt.zero_grad(set_to_none=set_to_none)
 
     @property
-    def param_groups(self):
+    def param_groups(self) -> list[dict[str, Any]]:
         return self._opt.param_groups
 
-    def state_dict(self):
+    def state_dict(self) -> dict[str, Any]:
         return self._opt.state_dict()
 
-    def load_state_dict(self, state):
+    def load_state_dict(self, state: dict[str, Any]) -> None:
         return self._opt.load_state_dict(state)
 
 

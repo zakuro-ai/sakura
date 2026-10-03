@@ -7,11 +7,56 @@ is available; synthetic 3×32×32 random tensors otherwise.
 from __future__ import annotations
 
 import os
+import queue
 import tempfile
+import threading
+from typing import Any, cast
 
 import torch
 
 from sakura.bench.harness import Workload
+
+
+def _download_cifar_with_budget(cache_dir: str, transform: Any) -> tuple[Any, Any]:
+    """torchvision CIFAR-10 download bounded by a wall-clock budget.
+
+    The upstream mirror (cs.toronto.edu) intermittently throttles to ~33 KB/s;
+    a 170 MB tarball then takes >80 min and a CI job dies at its timeout with
+    pytest reported as an orphan process. A slow transfer raises nothing, so
+    the synthetic-data fallback in the caller never triggers. Run the download
+    in a daemon thread (must not block interpreter exit) and convert budget
+    expiry into an exception the caller's fallback path already handles.
+    """
+    from torchvision import datasets
+
+    budget_s = float(os.environ.get("SAKURA_DATASET_BUDGET_S", "180"))
+    # Budget <= 0 means "don't even try". Expiring the budget does not stop the
+    # transfer: the daemon thread below cannot be cancelled, so it keeps pulling
+    # the 170 MB tarball in the background for the rest of the process, starving
+    # everything else of bandwidth. Where the mirror is slower than the budget
+    # the download can never land, so starting one only buys the saturation.
+    if budget_s <= 0:
+        raise RuntimeError(
+            "CIFAR-10 download disabled (SAKURA_DATASET_BUDGET_S<=0); "
+            "falling back to synthetic data"
+        )
+    out: "queue.Queue[Any]" = queue.Queue()
+
+    def _dl() -> None:
+        try:
+            tr = datasets.CIFAR10(cache_dir, train=True, download=True,
+                                  transform=transform)
+            va = datasets.CIFAR10(cache_dir, train=False, download=True,
+                                  transform=transform)
+            out.put((tr, va))
+        except Exception as e:  # noqa: BLE001 — relayed to the caller
+            out.put(e)
+
+    threading.Thread(target=_dl, daemon=True).start()
+    got = out.get(timeout=budget_s)  # queue.Empty on budget expiry
+    if isinstance(got, Exception):
+        raise got
+    return cast("tuple[Any, Any]", got)
 
 
 def _make_model(num_classes: int = 10) -> torch.nn.Module:
@@ -20,10 +65,11 @@ def _make_model(num_classes: int = 10) -> torch.nn.Module:
     m = models.resnet50(weights=None)
     # Replace final classification head for CIFAR-10's 10 classes.
     m.fc = torch.nn.Linear(m.fc.in_features, num_classes)
-    return m
+    model: torch.nn.Module = m
+    return model
 
 
-def _make_loaders(batch_size: int = 64, n_train: int = 256, n_val: int = 64):
+def _make_loaders(batch_size: int = 64, n_train: int = 256, n_val: int = 64) -> tuple[Any, Any]:
     try:
         from torchvision import datasets, transforms
         cache_dir = os.path.join(tempfile.gettempdir(), "sakura-cifar-cache")
@@ -35,8 +81,7 @@ def _make_loaders(batch_size: int = 64, n_train: int = 256, n_val: int = 64):
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
-        train = datasets.CIFAR10(cache_dir, train=True, download=True, transform=transform)
-        val = datasets.CIFAR10(cache_dir, train=False, download=True, transform=transform)
+        train, val = _download_cifar_with_budget(cache_dir, transform)
         train = torch.utils.data.Subset(train, list(range(min(n_train, len(train)))))
         val = torch.utils.data.Subset(val, list(range(min(n_val, len(val)))))
         return (
@@ -61,7 +106,7 @@ def _make_loaders(batch_size: int = 64, n_train: int = 256, n_val: int = 64):
         )
 
 
-def _eval_fn(model: torch.nn.Module, loader) -> dict:
+def _eval_fn(model: torch.nn.Module, loader: Any) -> dict[str, float]:
     model.eval()
     device = next(model.parameters()).device
     correct = total = 0
@@ -82,7 +127,7 @@ def _eval_fn(model: torch.nn.Module, loader) -> dict:
     }
 
 
-def _make_imagenet_loaders(batch_size: int, n_train: int, n_val: int):
+def _make_imagenet_loaders(batch_size: int, n_train: int, n_val: int) -> tuple[Any, Any]:
     """Same CIFAR-10 labels but images upscaled to 224×224 — ResNet-50's natural
     input shape. The 32×32 native CIFAR shape leaves ResNet-50 GPU-underutilized
     (per-op overhead dominates); 224×224 saturates the kernels and is the
@@ -101,8 +146,7 @@ def _make_imagenet_loaders(batch_size: int, n_train: int, n_val: int):
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                   std=[0.229, 0.224, 0.225]),
         ])
-        train = datasets.CIFAR10(cache_dir, train=True, download=True, transform=transform)
-        val = datasets.CIFAR10(cache_dir, train=False, download=True, transform=transform)
+        train, val = _download_cifar_with_budget(cache_dir, transform)
         train = torch.utils.data.Subset(train, list(range(min(n_train, len(train)))))
         val = torch.utils.data.Subset(val, list(range(min(n_val, len(val)))))
         return (

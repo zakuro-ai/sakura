@@ -1,9 +1,9 @@
 """HandlerRegistry: in-process dispatch table for worker-side handlers."""
 from __future__ import annotations
 
-from typing import Callable, Tuple
+from typing import Any, Callable, Tuple
 
-TensorDict = dict
+TensorDict = dict[str, Any]
 HandlerFn = Callable[[list[TensorDict], bytes], Tuple[list[TensorDict], bytes]]
 
 

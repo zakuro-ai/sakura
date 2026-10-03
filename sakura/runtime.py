@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from sakura.events import Event, OnError
 from sakura.service import Service
@@ -15,7 +15,7 @@ class SakuraRuntime:
         self,
         *,
         compute: Optional[object] = None,
-        logger: Optional[Callable[[dict], None]] = None,
+        logger: Optional[Callable[[dict[str, Any]], None]] = None,
         record_history: bool = True,
     ) -> None:
         """`record_history=False` skips per-event bookkeeping (memory + ~0.4µs/event).
@@ -30,7 +30,7 @@ class SakuraRuntime:
         self._sorted: list[Service] = []
         self._by_name: dict[str, Service] = {}
         self._started = False
-        self._history: list[dict] = []
+        self._history: list[dict[str, Any]] = []
 
     @property
     def compute(self) -> Optional[object]:
@@ -49,7 +49,7 @@ class SakuraRuntime:
             if callable(hook):
                 try:
                     hook(self)
-                except Exception:
+                except BaseException:
                     _log.exception("service '%s' on_runtime_start failed", s.name)
 
     def shutdown(self, *, timeout: float = 30.0) -> None:
@@ -60,7 +60,7 @@ class SakuraRuntime:
             if callable(hook):
                 try:
                     hook(self)
-                except Exception:
+                except BaseException:
                     _log.exception("service '%s' on_runtime_shutdown failed", s.name)
         self._started = False
 
@@ -68,7 +68,7 @@ class SakuraRuntime:
         self.start()
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         self.shutdown()
 
     def install(self, service: Service) -> None:
@@ -90,7 +90,7 @@ class SakuraRuntime:
             if callable(hook):
                 try:
                     hook(self)
-                except Exception:
+                except BaseException:
                     _log.exception("service '%s' on_runtime_start failed", service.name)
 
     def uninstall(self, name: str) -> None:
@@ -122,11 +122,11 @@ class SakuraRuntime:
                 })
             return
 
-        errors: Optional[list[tuple[Service, Exception]]] = None
+        errors: Optional[list[tuple[Service, BaseException]]] = None
         for s in services:
             try:
                 s.on_event(event)
-            except Exception as exc:
+            except BaseException as exc:  # noqa: BLE001
                 if errors is None:
                     errors = []
                 errors.append((s, exc))
@@ -150,7 +150,7 @@ class SakuraRuntime:
             try:
                 self._logger(record)
             except Exception:
-                pass  # best-effort: logger failures must not interrupt the dispatch loop
+                pass
         if errors and not isinstance(event, OnError):
             for svc, svc_exc in errors:
                 err_evt = OnError(
@@ -161,11 +161,11 @@ class SakuraRuntime:
                 )
                 self.dispatch(err_evt)
 
-    def history(self) -> list[dict]:
+    def history(self) -> list[dict[str, Any]]:
         """Return a copy of the rolled-up event log."""
         return list(self._history)
 
-    def scale_loss(self, loss):
+    def scale_loss(self, loss: Any) -> Any:
         """Thread a loss tensor through every service that implements wrap_loss.
 
         Services iterate in priority order. Each can return a wrapped loss
@@ -181,11 +181,11 @@ class SakuraRuntime:
             if callable(wrap):
                 try:
                     loss = wrap(loss)
-                except Exception:
+                except BaseException:
                     _log.exception("service '%s' wrap_loss failed", s.name)
         return loss
 
-    def optimizer_step(self, optimizer) -> bool:
+    def optimizer_step(self, optimizer: Any) -> bool:
         """Give services a chance to step the optimizer themselves.
 
         Returns True if any service handled the step (loop should NOT call
@@ -203,7 +203,7 @@ class SakuraRuntime:
                 try:
                     if stepper(optimizer):
                         return True
-                except Exception:
+                except BaseException:
                     _log.exception("service '%s' optimizer_step failed", s.name)
         return False
 

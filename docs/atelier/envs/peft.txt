@@ -1,0 +1,57 @@
+# sakura/atelier/backends/peft.py -- exact pins verified on a single-GPU Linux host
+# (RTX 2080 Ti, CUDA 12.1 wheels), python 3.11, 2026-10-02.
+#
+# uv venv .venv --python 3.11
+# uv pip install --python .venv/bin/python torch \
+#     --index-url https://download.pytorch.org/whl/cu121
+# uv pip install --python .venv/bin/python \
+#     "transformers>=4.57" "peft>=0.13" accelerate datasets safetensors \
+#     sentencepiece protobuf
+
+torch==2.5.1+cu121
+transformers==5.18.0
+peft==0.21.2
+accelerate==1.15.0
+safetensors==0.8.0
+sentencepiece==0.2.2
+protobuf==7.36.2
+
+# Base model: LiquidAI/LFM2-350M -- ungated, native `transformers` support
+# (model_type "lfm2") since transformers 5.x: no trust_remote_code needed.
+# Licence: LFM Open License v1.0 (CONTRACTS §2.4).
+
+# GGUF export/eval needs a llama.cpp checkout built with llama-quantize and
+# llama-cli, NOT a pip package. This backend finds it via an environment
+# variable:
+#
+#   LLAMA_CPP_DIR=/path/to/llama.cpp
+#
+# requiring $LLAMA_CPP_DIR/convert_hf_to_gguf.py and
+# $LLAMA_CPP_DIR/build/bin/{llama-quantize,llama-cli}. Verified against the
+# llama.cpp checkout at ~/llama.cpp (commit 5f55650, 2026-07-30),
+# which already has lfm2 architecture support built in -- no patch needed.
+# Quantisation format: $SAKURA_GGUF_QUANT (default Q8_0).
+#
+# convert_hf_to_gguf.py is invoked with THIS venv's own interpreter
+# (sys.executable), not a bare `python3`: the host's system python3 has an
+# older `transformers` that cannot load the tokenizer backend class this
+# venv's transformers==5.18.0 saves for LFM2 ("TokenizersBackend") -- a real
+# failure hit and fixed during this track's GPU runs (measured during development).
+# This venv additionally needs the `gguf` pip package:
+#   uv pip install --python .venv/bin/python gguf
+#
+# MLX export (mlx_lm.convert) only runs on Apple Silicon (Metal); there is no
+# Linux x86_64 wheel for `mlx`, so on Linux this export fails by design --
+# MLXUnavailableError with the precise import error, never silently skipped.
+
+# runtime_eval()/predict() for gguf use llama-cpp-python (raw text-completion
+# API, no chat template) instead of shelling out to llama-cli -- llama-cli on
+# this build kept its interactive chat/REPL framing around a
+# "single-turn" completion regardless of --no-conversation/--chat-template
+# '', which measured exact_match 0.0 for reasons that had nothing to do with
+# the GGUF (measured during development). llama-cpp-python builds from source and
+# needs a real CC/CXX, not whatever $CC is pre-set to on the host:
+#
+#   CC=gcc CXX=g++ uv pip install --python .venv/bin/python llama-cpp-python
+#
+llama_cpp_python==0.3.36

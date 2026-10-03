@@ -17,4 +17,3 @@ Closes #
 - [ ] Lint / format pass locally
 - [ ] Tests added or updated (or N/A with reason)
 - [ ] Docs updated (or N/A)
-- [ ] CHANGELOG.md updated under `## [Unreleased]` (or N/A)

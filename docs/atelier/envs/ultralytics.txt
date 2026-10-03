@@ -1,0 +1,23 @@
+# sakura/atelier/backends/ultralytics.py -- exact pins verified on a single-GPU Linux host
+# (RTX 2080 Ti, CUDA 12.1 wheels), python 3.11, 2026-10-02.
+#
+# uv venv .venv --python 3.11
+# uv pip install --python .venv/bin/python torch torchvision \
+#     --index-url https://download.pytorch.org/whl/cu121
+# uv pip install --python .venv/bin/python \
+#     "ultralytics==8.4.171" onnx onnxruntime-gpu
+
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+ultralytics==8.4.171
+onnx==1.23.1
+onnxruntime-gpu==1.30.0
+
+# Licence: ultralytics is AGPL-3.0 (CONTRACTS.md §2.4). Not a dependency a
+# customer-facing SaaS can vendor without also open-sourcing the integrating
+# code, or a commercial Ultralytics licence -- tracked as its own issue
+# before this backend ships to customers (measured during development).
+#
+# CPU-only alternative for CI/dev boxes without a GPU:
+#   uv pip install --python .venv/bin/python torch torchvision \
+#       --index-url https://download.pytorch.org/whl/cpu

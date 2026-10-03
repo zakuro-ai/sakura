@@ -148,7 +148,7 @@ class TestOptimizerStep:
         try:
             rt.install(b)
         except Exception:
-            pass  # best-effort: hand-rolled subclass may not install cleanly
+            pass
         assert rt.optimizer_step(object()) is False
 
     def test_failing_optimizer_step_falls_through(self):

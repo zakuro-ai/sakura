@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from typing import Any
 
 import torch
 
@@ -29,7 +30,7 @@ from sakura.bench.harness import Workload
 _MODEL_NAME = "distilbert-base-uncased"
 
 
-def _collate_dict(rows):
+def _collate_dict(rows: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
     """Collate a list of dicts into a single dict batch with a `labels` key.
 
     HF datasets uses `label` (singular); synthetic uses `labels`. Both get
@@ -43,7 +44,7 @@ def _collate_dict(rows):
     return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
 
 
-def _try_real_data(batch_size: int, n_train: int, n_val: int, max_length: int):
+def _try_real_data(batch_size: int, n_train: int, n_val: int, max_length: int) -> tuple[Any, Any]:
     from transformers import AutoTokenizer
     from datasets import load_dataset
 
@@ -52,7 +53,7 @@ def _try_real_data(batch_size: int, n_train: int, n_val: int, max_length: int):
     os.makedirs(cache_dir, exist_ok=True)
     ds = load_dataset("glue", "sst2", cache_dir=cache_dir)
 
-    def _tokenize(b):
+    def _tokenize(b: Any) -> Any:
         return tok(b["sentence"], padding="max_length", truncation=True, max_length=max_length)
 
     train = ds["train"].shuffle(seed=42).select(range(min(n_train, len(ds["train"]))))
@@ -69,10 +70,10 @@ def _try_real_data(batch_size: int, n_train: int, n_val: int, max_length: int):
     )
 
 
-def _make_synthetic_loaders(batch_size: int, n_train: int, n_val: int, max_length: int):
+def _make_synthetic_loaders(batch_size: int, n_train: int, n_val: int, max_length: int) -> tuple[Any, Any]:
     torch.manual_seed(0)
 
-    def _make(n):
+    def _make(n: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         ids = torch.randint(0, 30522, (n, max_length))
         mask = torch.ones((n, max_length), dtype=torch.long)
         labels = torch.randint(0, 2, (n,))
@@ -81,14 +82,14 @@ def _make_synthetic_loaders(batch_size: int, n_train: int, n_val: int, max_lengt
     train_ids, train_mask, train_lbl = _make(n_train)
     val_ids, val_mask, val_lbl = _make(n_val)
 
-    class _BertBatch(torch.utils.data.Dataset):
-        def __init__(self, ids, mask, lbl):
+    class _BertBatch(torch.utils.data.Dataset[Any]):
+        def __init__(self, ids: torch.Tensor, mask: torch.Tensor, lbl: torch.Tensor) -> None:
             self.ids, self.mask, self.lbl = ids, mask, lbl
 
-        def __len__(self):
-            return self.ids.shape[0]
+        def __len__(self) -> int:
+            return int(self.ids.shape[0])  # torch.Size element is already an int; cast for mypy
 
-        def __getitem__(self, i):
+        def __getitem__(self, i: int) -> dict[str, torch.Tensor]:
             return {"input_ids": self.ids[i], "attention_mask": self.mask[i], "labels": self.lbl[i]}
 
     return (
@@ -103,7 +104,7 @@ def _make_synthetic_loaders(batch_size: int, n_train: int, n_val: int, max_lengt
     )
 
 
-def _make_loaders(batch_size: int, n_train: int, n_val: int, max_length: int):
+def _make_loaders(batch_size: int, n_train: int, n_val: int, max_length: int) -> tuple[Any, Any]:
     try:
         return _try_real_data(batch_size, n_train, n_val, max_length)
     except Exception:
@@ -119,10 +120,11 @@ def _make_model() -> torch.nn.Module:
     """
     from transformers import AutoConfig, AutoModelForSequenceClassification
     config = AutoConfig.from_pretrained(_MODEL_NAME, num_labels=2)
-    return AutoModelForSequenceClassification.from_config(config)
+    model: torch.nn.Module = AutoModelForSequenceClassification.from_config(config)
+    return model
 
 
-def _eval_fn(model: torch.nn.Module, loader) -> dict:
+def _eval_fn(model: torch.nn.Module, loader: Any) -> dict[str, float]:
     """Eval over dict batches. Returns {val_loss, val_acc}."""
     model.eval()
     device = next(model.parameters()).device

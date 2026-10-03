@@ -1,7 +1,3 @@
-[![test](https://github.com/zakuro-ai/sakura/actions/workflows/test.yml/badge.svg)](https://github.com/zakuro-ai/sakura/actions/workflows/test.yml)
-[![sast](https://github.com/zakuro-ai/sakura/actions/workflows/sast.yml/badge.svg)](https://github.com/zakuro-ai/sakura/actions/workflows/sast.yml)
-[![PyPI](https://img.shields.io/pypi/v/sakura-ml)](https://pypi.org/project/sakura-ml/)
-
 <h1 align="center">Sakura</h1>
 
 <p align="center">
@@ -47,19 +43,11 @@ You install services on a `SakuraRuntime`, attach an adapter to your training lo
 
 ## Install
 
-The base install is **dispatch / runtime / wire only** — it does **not** pull
-PyTorch, so it's lightweight for dispatch-only or API use. The ML framework
-dependencies live in extras:
-
 ```bash
-pip install sakura-ml                      # core: dispatch + runtime + wire (no torch)
-pip install 'sakura-ml[training]'          # + torch / torchvision / lightning — services, ZeRO, adapters
-pip install 'sakura-ml[huggingface]'       # + training + transformers/datasets/accelerate — the HFAdapter
-pip install 'sakura-ml[bench]'             # + everything the benchmark harness needs
+pip install sakura-ml
+# or with framework integrations:
+pip install 'sakura-ml[lightning,huggingface]'
 ```
-
-Using a training feature without the extra raises an error telling you exactly
-which extra to install (e.g. `pip install 'sakura-ml[training]'`).
 
 From source:
 
@@ -69,7 +57,7 @@ uv pip install maturin
 maturin develop --release
 ```
 
-> Alpha wheels are available on PyPI (`pip install sakura-ml`). Platform wheels for Linux x86_64/aarch64, macOS arm64, and Windows x86_64 are built automatically on release.
+> **Wheel packaging** is being finalized — until then, the from-source path is the recommended install.
 
 ## Quickstart
 

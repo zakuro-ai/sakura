@@ -21,7 +21,7 @@ from sakura.service import BaseService
 _PRIMITIVE = (str, int, float, bool, type(None))
 
 
-def _safe_payload(event: Event) -> dict:
+def _safe_payload(event: Event) -> dict[str, Any]:
     """Extract serializable fields from an event payload, skipping non-JSON values."""
     out: dict[str, Any] = {}
     for f in dataclasses.fields(event):
@@ -52,19 +52,19 @@ class Telemetry(BaseService):
     def __init__(
         self,
         *,
-        output: Union[Callable[[dict], None], IO[str], str, None] = None,
+        output: Union[Callable[[dict[str, Any]], None], IO[str], str, None] = None,
     ):
         super().__init__()
         self._output = output if output is not None else sys.stderr
         self._opened: Optional[IO[str]] = None
 
-    def _emit(self, record: dict) -> None:
+    def _emit(self, record: dict[str, Any]) -> None:
         out = self._output
         if callable(out):
             try:
                 out(record)
             except Exception:
-                pass  # best-effort: telemetry failures must not interrupt the training loop
+                pass
             return
         if isinstance(out, str):
             if self._opened is None:
@@ -76,14 +76,14 @@ class Telemetry(BaseService):
             f.write(json.dumps(record, default=str) + "\n")
             f.flush()
         except Exception:
-            pass  # best-effort: telemetry failures must not interrupt the training loop
+            pass
 
     def on_runtime_shutdown(self, runtime: Any) -> None:
         if self._opened is not None:
             try:
                 self._opened.close()
             except Exception:
-                pass  # best-effort: telemetry failures must not interrupt the training loop
+                pass
             self._opened = None
 
     def on_event(self, event: Event) -> None:

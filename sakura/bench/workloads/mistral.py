@@ -13,12 +13,14 @@ Future implementation will:
 """
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 
 from sakura.bench.harness import Workload
 
 
-def _check_gpu():
+def _check_gpu() -> None:
     if not torch.cuda.is_available():
         raise NotImplementedError(
             "Mistral-7B LoRA workload requires CUDA GPU. Skip in CPU-only environments."
@@ -27,7 +29,7 @@ def _check_gpu():
         raise NotImplementedError("Mistral-7B LoRA workload requires at least 1 GPU.")
 
 
-def _make_model():
+def _make_model() -> None:
     _check_gpu()
     raise NotImplementedError(
         "mistral.make_workload is a stub for the perf tier. "
@@ -35,11 +37,11 @@ def _make_model():
     )
 
 
-def _make_loader():
+def _make_loader() -> None:
     raise NotImplementedError("mistral loader is a stub.")
 
 
-def _eval_fn(model, loader):
+def _eval_fn(model: Any, loader: Any) -> dict[str, float]:
     raise NotImplementedError("mistral eval_fn is a stub.")
 
 

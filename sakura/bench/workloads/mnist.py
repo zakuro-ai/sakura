@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from typing import Any
 
 import torch
 
@@ -22,7 +23,7 @@ def _make_model() -> torch.nn.Module:
     )
 
 
-def _make_loaders(batch_size: int = 64, n_train: int = 1024, n_val: int = 256):
+def _make_loaders(batch_size: int = 64, n_train: int = 1024, n_val: int = 256) -> tuple[Any, Any]:
     """Returns (train_loader, val_loader). Uses synthetic data if MNIST download
     is unavailable (offline CI). Real MNIST when torchvision can fetch it."""
     try:
@@ -57,7 +58,7 @@ def _make_loaders(batch_size: int = 64, n_train: int = 1024, n_val: int = 256):
         return train_loader, val_loader
 
 
-def _eval_fn(model: torch.nn.Module, loader) -> dict:
+def _eval_fn(model: torch.nn.Module, loader: Any) -> dict[str, float]:
     model.eval()
     device = next(model.parameters()).device
     correct = total = 0
@@ -110,7 +111,7 @@ def _make_model_multi() -> torch.nn.Module:
 
 def _make_synthetic_tensor_loaders(
     batch_size: int, n_train: int, n_val: int, n_features: int,
-):
+) -> tuple[Any, Any]:
     """Plain torch.TensorDataset loaders — no PIL.
 
     The standard MNIST workload uses torchvision/PIL transforms which hold
@@ -134,7 +135,7 @@ def _make_synthetic_tensor_loaders(
     return train_loader, val_loader
 
 
-def _eval_fn_multi(model: torch.nn.Module, loader) -> dict:
+def _eval_fn_multi(model: torch.nn.Module, loader: Any) -> dict[str, float]:
     """Eval over (x, y) tuples on a tensor loader. Same semantics as
     `_eval_fn` but skips the .to(device) calls already handled by
     `_DeviceLoader`."""

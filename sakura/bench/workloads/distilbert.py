@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from typing import Any
 
 import torch
 
@@ -23,7 +24,7 @@ from sakura.bench.harness import Workload
 _MODEL_NAME = "distilbert-base-uncased"
 
 
-def _collate(rows):
+def _collate(rows: list[dict[str, torch.Tensor]]) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
     """Collate a list of dicts into (input_dict, labels) tuple."""
     input_ids = torch.stack([r["input_ids"] for r in rows])
     attention_mask = torch.stack([r["attention_mask"] for r in rows])
@@ -33,7 +34,7 @@ def _collate(rows):
     return {"input_ids": input_ids, "attention_mask": attention_mask}, labels
 
 
-def _try_real_data(batch_size: int, n_train: int, n_val: int, max_length: int):
+def _try_real_data(batch_size: int, n_train: int, n_val: int, max_length: int) -> tuple[Any, Any]:
     """Try to load the real SST-2 dataset; return (train_loader, val_loader)
     or raise if anything fails."""
     from transformers import AutoTokenizer
@@ -44,7 +45,7 @@ def _try_real_data(batch_size: int, n_train: int, n_val: int, max_length: int):
     os.makedirs(cache_dir, exist_ok=True)
     ds = load_dataset("glue", "sst2", cache_dir=cache_dir)
 
-    def _tokenize(b):
+    def _tokenize(b: Any) -> Any:
         return tok(b["sentence"], padding="max_length", truncation=True, max_length=max_length)
 
     train = ds["train"].shuffle(seed=42).select(range(min(n_train, len(ds["train"]))))
@@ -61,11 +62,11 @@ def _try_real_data(batch_size: int, n_train: int, n_val: int, max_length: int):
     )
 
 
-def _make_synthetic_loaders(batch_size: int, n_train: int, n_val: int, max_length: int):
+def _make_synthetic_loaders(batch_size: int, n_train: int, n_val: int, max_length: int) -> tuple[Any, Any]:
     """Synthetic tokenized random tensors with the right shape."""
     torch.manual_seed(0)
 
-    def _make(n):
+    def _make(n: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         ids = torch.randint(0, 30522, (n, max_length))  # distilbert vocab ~30k
         mask = torch.ones((n, max_length), dtype=torch.long)
         labels = torch.randint(0, 2, (n,))
@@ -74,14 +75,14 @@ def _make_synthetic_loaders(batch_size: int, n_train: int, n_val: int, max_lengt
     train_ids, train_mask, train_lbl = _make(n_train)
     val_ids, val_mask, val_lbl = _make(n_val)
 
-    class _BertBatch(torch.utils.data.Dataset):
-        def __init__(self, ids, mask, lbl):
+    class _BertBatch(torch.utils.data.Dataset[Any]):
+        def __init__(self, ids: torch.Tensor, mask: torch.Tensor, lbl: torch.Tensor) -> None:
             self.ids, self.mask, self.lbl = ids, mask, lbl
 
-        def __len__(self):
-            return self.ids.shape[0]
+        def __len__(self) -> int:
+            return int(self.ids.shape[0])  # torch.Size element is already an int; cast for mypy
 
-        def __getitem__(self, i):
+        def __getitem__(self, i: int) -> dict[str, torch.Tensor]:
             return {"input_ids": self.ids[i], "attention_mask": self.mask[i], "labels": self.lbl[i]}
 
     return (
@@ -96,7 +97,7 @@ def _make_synthetic_loaders(batch_size: int, n_train: int, n_val: int, max_lengt
     )
 
 
-def _make_loaders(batch_size: int = 32, n_train: int = 200, n_val: int = 600, max_length: int = 64):
+def _make_loaders(batch_size: int = 32, n_train: int = 200, n_val: int = 600, max_length: int = 64) -> tuple[Any, Any]:
     try:
         return _try_real_data(batch_size, n_train, n_val, max_length)
     except Exception:
@@ -107,7 +108,8 @@ def _make_model() -> torch.nn.Module:
     """Architecture-only DistilBERT for SST-2 (random init for benchmarks)."""
     from transformers import AutoConfig, AutoModelForSequenceClassification
     config = AutoConfig.from_pretrained(_MODEL_NAME, num_labels=2)
-    return AutoModelForSequenceClassification.from_config(config)
+    model: torch.nn.Module = AutoModelForSequenceClassification.from_config(config)
+    return model
 
 
 class _BertModelWrapper(torch.nn.Module):
@@ -118,22 +120,24 @@ class _BertModelWrapper(torch.nn.Module):
     underlying DistilBERT model.
     """
 
-    def __init__(self, base):
+    def __init__(self, base: Any) -> None:
         super().__init__()
         self.base = base
 
-    def forward(self, x, *args, **kwargs):
+    def forward(self, x: Any, *args: Any, **kwargs: Any) -> torch.Tensor:
         if isinstance(x, dict):
-            return self.base(**x).logits
+            logits: torch.Tensor = self.base(**x).logits
+            return logits
         # Fallback: treat as raw input_ids tensor.
-        return self.base(input_ids=x).logits
+        out: torch.Tensor = self.base(input_ids=x).logits
+        return out
 
 
 def _make_model_wrapped() -> torch.nn.Module:
     return _BertModelWrapper(_make_model())
 
 
-def _eval_fn(model: torch.nn.Module, loader) -> dict:
+def _eval_fn(model: torch.nn.Module, loader: Any) -> dict[str, float]:
     """Eval loop — loader yields (input_dict, labels) tuples."""
     model.eval()
     device = next(model.parameters()).device

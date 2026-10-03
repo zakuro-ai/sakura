@@ -1,0 +1,8 @@
+# object_detection/fast@1 -- immutable once released (CONTRACTS §1.1).
+# Placeholder values for track E2's ultralytics backend (yolo11n); not tuned
+# here -- E2 owns backends/ultralytics.py and may report needed changes.
+hyperparameters:
+  image_size: 640
+  epochs: 20
+  batch_size: 16
+  learning_rate: 0.001

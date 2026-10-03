@@ -11,6 +11,8 @@ Hook mapping (per spec §10.1):
 """
 from __future__ import annotations
 
+from typing import Any
+
 try:
     from lightning.pytorch import Callback
 except ImportError:  # pragma: no cover
@@ -33,18 +35,18 @@ from sakura.runtime import SakuraRuntime
 class LightningAdapter(Callback, Adapter):
     """Lightning callback that translates framework hooks into Sakura events."""
 
-    def __init__(self, runtime: SakuraRuntime, *, rank: int = 0, world_size: int = 1):
+    def __init__(self, runtime: SakuraRuntime, *, rank: int = 0, world_size: int = 1) -> None:
         # NOTE: we call Adapter.__init__ explicitly because Callback's __init__
         # may not accept positional args.
         Callback.__init__(self)
         Adapter.__init__(self, runtime)
         self._rank = rank
         self._world_size = world_size
-        self._collected: list[dict] = []
+        self._collected: list[dict[str, Any]] = []
 
     # ........................................................... lifecycle
 
-    def on_train_start(self, trainer, pl_module):
+    def on_train_start(self, trainer: Any, pl_module: Any) -> None:
         opt = trainer.optimizers[0] if trainer.optimizers else None
         self.emit(OnTrainBegin(
             model=pl_module,
@@ -55,29 +57,29 @@ class LightningAdapter(Callback, Adapter):
             world_size=self._world_size,
         ))
 
-    def on_train_epoch_start(self, trainer, pl_module):
+    def on_train_epoch_start(self, trainer: Any, pl_module: Any) -> None:
         self.emit(OnEpochBegin(
             epoch=int(trainer.current_epoch),
             rank=self._rank,
             world_size=self._world_size,
         ))
 
-    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+    def on_train_batch_start(self, trainer: Any, pl_module: Any, batch: Any, batch_idx: int) -> None:
         self.emit(OnTrainStepBegin(
             model=pl_module, batch=batch, step=int(batch_idx),
             rank=self._rank, world_size=self._world_size,
         ))
 
-    def on_before_optimizer_step(self, trainer, pl_module, optimizer):
+    def on_before_optimizer_step(self, trainer: Any, pl_module: Any, optimizer: Any) -> None:
         self.emit(OnOptimizerStep(
             optimizer=optimizer, rank=self._rank, world_size=self._world_size,
         ))
 
-    def on_train_epoch_end(self, trainer, pl_module):
+    def on_train_epoch_end(self, trainer: Any, pl_module: Any) -> None:
         opt = trainer.optimizers[0] if getattr(trainer, "optimizers", None) else None
         metrics = dict(getattr(trainer, "callback_metrics", {}) or {})
         # Convert any tensor metrics to float for telemetry serializability.
-        clean = {}
+        clean: dict[str, Any] = {}
         for k, v in metrics.items():
             try:
                 clean[k] = float(v)
@@ -89,13 +91,13 @@ class LightningAdapter(Callback, Adapter):
             rank=self._rank, world_size=self._world_size,
         ))
 
-    def on_train_end(self, trainer, pl_module):
+    def on_train_end(self, trainer: Any, pl_module: Any) -> None:
         self.emit(OnTrainEnd(
             model=pl_module, history=list(self._collected),
             rank=self._rank, world_size=self._world_size,
         ))
 
-    def on_exception(self, trainer, pl_module, exception):
+    def on_exception(self, trainer: Any, pl_module: Any, exception: BaseException) -> None:
         self.emit(OnError(
             exc=exception, context={"hook": "lightning"},
             rank=self._rank, world_size=self._world_size,

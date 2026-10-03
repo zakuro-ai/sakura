@@ -4,21 +4,33 @@ build-backend = "maturin"
 
 [project]
 name = "sakura-ml"
-version = "1.0.0a1"
+version = "1.0.0"
 description = "Sakura: SOTA training services for PyTorch DDP / Lightning / HuggingFace Trainer."
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.10"
 authors = [{ name = "ZakuroAI", email = "git@zakuro-ai.com" }]
 dependencies = [
-    "tqdm>=4.68.1",
+    "tqdm>=4.68.2",
+    "torch",
+    "torchvision",
     "numpy",
     "gnutools-python",
     "chardet",
+    "lightning",
     "ipython",
     "charset-normalizer>=3.4.7",
     "zakuro-ai>=0.2.23",
-    "cloudpickle",
+    # sakura.atelier: the AtelierSpec schema and its YAML. Training stacks
+    # (ludwig, ultralytics, tabpfn, peft) are NOT dependencies -- each lives in
+    # its backend venv and is imported lazily (docs/atelier/CONTRACTS.md §2).
+    "pydantic>=2",
+    "pyyaml",
+    # sakura.atelier.data: pandas is the common frame every data.format
+    # converges on (CONTRACTS §1.2 / data.py docstring); it is a core dep
+    # (not a backend-venv extra) because the CLI's `validate`/materialise
+    # path needs it with no backend installed.
+    "pandas",
 ]
 classifiers = [
     "Intended Audience :: Developers",
@@ -31,21 +43,16 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-training = [
-    "torch>=2.0",
-    "torchvision>=0.15",
-    "lightning",
-]
+lightning = ["lightning"]
 huggingface = [
-    "sakura-ml[training]",
     "transformers>=5.10.2",
     "datasets>=4.8.5",
     "accelerate>=1.13.0",
 ]
-bench = ["sakura-ml[training,huggingface]"]
+bench = ["sakura-ml[huggingface]", "nvidia-ml-py>=12.535.108"]
 
 [dependency-groups]
-dev = ["pytest", "pytest-cov", "maturin>=1.4", "mypy>=1.13"]
+dev = ["pytest", "pytest-cov", "maturin>=1.4", "mypy>=1.10"]
 
 [project.scripts]
 sakura-worker = "sakura.worker.__main__:main"
@@ -53,39 +60,61 @@ sakura-bench = "sakura.bench.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--cov=sakura --cov-report=xml --cov-fail-under=70"
 markers = [
-    "gpu: tests that require CUDA hardware (deselected in CPU-only CI with -m 'not gpu')",
+    "gpu: requires real CUDA/MPI hardware (deselect with '-m not gpu')",
+    "wire: tests requiring the compiled sakura_wire extension",
+    "timing: asserts on wall-clock ratios; unreliable on contended CI runners",
+]
+
+[tool.coverage.run]
+# The L'Atelier training backends drive Ludwig / Ultralytics / TabPFN / PEFT,
+# none of which CI installs (each lives in its own GPU-runner venv,
+# docs/atelier/envs/). Their unit tests still run here against fakes; the
+# training paths are verified on the GPU runners through the engine CLI.
+# Everything else in sakura/atelier (spec, registry, data, CLI) is measured.
+omit = [
+    "sakura/atelier/backends/ludwig.py",
+    "sakura/atelier/backends/ultralytics.py",
+    "sakura/atelier/backends/tabpfn.py",
+    "sakura/atelier/backends/peft.py",
 ]
 
 [tool.mypy]
-# Lenient on introduction (closes #102): the gate is green today and blocks
-# *new* type regressions. `ignore_missing_imports` keeps torch / lightning /
-# the sakura_wire Rust extension as `Any` so the check runs without the heavy
-# ML stack installed. Ratchet toward `strict = true` (and drop the ignore) in
-# follow-up sprints as stubs land.
-python_version = "3.10"
-files = ["sakura"]
-ignore_missing_imports = true
-strict = false
+strict = true
 
-# Coverage is measured/enforced in the dedicated `coverage` CI job (full suite)
-# rather than via pytest addopts, so local single-file runs and the wire-only
-# CI lane aren't forced under the package-wide threshold. See .github/workflows/
-# test.yml. Baseline at introduction: ~76% with branch coverage (closes #101);
-# ratchet the threshold upward later.
-[tool.coverage.run]
-source = ["sakura"]
-branch = true
-
-[tool.coverage.report]
-show_missing = true
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-    "@(abc\\.)?abstractmethod",
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "torchvision.*",
+    "lightning.*",
+    "transformers.*",
+    "datasets.*",
+    "accelerate.*",
+    "zakuro.*",
+    "gnutools.*",
+    "sakura_wire.*",
+    "pynvml",
+    "pynvml.*",
+    "yaml",
+    # sakura.atelier.data core dep (no stubs published)
+    "pandas",
+    "pandas.*",
+    "soundfile",
+    "datasets",
+    "datasets.*",
+    # atelier backends, each imported only inside its own venv
+    "ludwig.*",
+    "ultralytics.*",
+    "tabpfn.*",
+    "peft.*",
+    "onnx.*",
+    "onnxruntime.*",
+    "sklearn.*",
+    "mlx_lm.*",
+    "llama_cpp.*",
 ]
+ignore_missing_imports = true
 
 [tool.maturin]
 manifest-path = "crates/sakura-wire/Cargo.toml"

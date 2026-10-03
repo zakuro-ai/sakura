@@ -7,8 +7,6 @@ from __future__ import annotations
 import sys
 from typing import Any, Callable, Optional
 
-import sakura_wire as _native
-
 from sakura.dispatch.base import Dispatcher, Future
 from sakura.dispatch.remote import RemoteDispatcher
 
@@ -28,6 +26,11 @@ class LocalDispatcher(Dispatcher):
             raise NotImplementedError(
                 "n_workers > 1 not supported in Plan 2; Plan 4+ adds pool support."
             )
+        # Lazy import: the native wire is only needed once a LocalDispatcher
+        # is actually constructed, so `import sakura` works on installs
+        # without the Rust extension (e.g. the no-Rust CI job, pure-Python
+        # federation deployments).
+        import sakura_wire as _native
         self._supervisor = _native.WorkerSupervisor(shutdown_timeout_s=shutdown_timeout_s)
         env = {}
         if gpus is not None:
@@ -58,9 +61,9 @@ class LocalDispatcher(Dispatcher):
         try:
             self._supervisor.shutdown()
         except Exception:
-            pass  # best-effort: ignore supervisor errors during cleanup
+            pass
 
-    def stats(self) -> dict:
+    def stats(self) -> dict[str, Any]:
         return {"kind": "local", "uri": self._uri}
 
 

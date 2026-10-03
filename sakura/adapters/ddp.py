@@ -58,7 +58,7 @@ class DDPAdapter(Adapter):
         ))
 
     def on_epoch_end(self, epoch: int, model: Any, optimizer: Any,
-                      metrics: dict) -> None:
+                      metrics: dict[str, Any]) -> None:
         self.emit(OnEpochEnd(
             epoch=int(epoch), model=model, optimizer=optimizer, metrics=dict(metrics),
             rank=self._rank, world_size=self._world_size,

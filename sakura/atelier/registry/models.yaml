@@ -1,0 +1,51 @@
+# Model id -> backend, supported tasks, export formats, upstream source, licence.
+#
+# `tasks` is the set this model id can be requested for; AtelierSpec.model
+# must be one of these keys and spec.task must be in its `tasks` list.
+# Contract: docs/atelier/CONTRACTS.md §2.2 routing table.
+
+resnet18:
+  backend: ludwig
+  tasks: [image_classification]
+  exports: [onnx, torchscript]
+  source: torchvision://resnet18
+  license: BSD-3-Clause
+
+stacked_cnn_audio:
+  backend: ludwig
+  tasks: [audio_classification]
+  exports: [onnx, torchscript]
+  source: ludwig://stacked_cnn
+  license: Apache-2.0
+
+ludwig_ecd:
+  backend: ludwig
+  tasks: [tabular_classification, tabular_regression]
+  exports: [onnx]
+  source: ludwig://ecd  # Encoder-Combiner-Decoder (tabular deep net)
+  license: Apache-2.0
+
+tabpfn_v2:
+  backend: tabpfn
+  tasks: [tabular_classification, tabular_regression]
+  exports: []  # in-context: preprocessing + ensembling live outside the torch module, so
+  # no faithful ONNX exists (backends/tabpfn.py). Evaluation-only; ludwig_ecd ships ONNX.
+  source: huggingface://Prior-Labs/TabPFN-v2
+  # Weights ungated as of tabpfn==2.1.3 (verified: no account needed).
+  # Releases >=6 gate the same weights behind a Prior Labs account + API key
+  # -- do not upgrade past the pin without re-checking this. See CONTRACTS §2.2.
+  license: Prior-Labs-License
+
+yolo11n:
+  backend: ultralytics
+  tasks: [object_detection]
+  exports: [onnx]
+  source: ultralytics://yolo11n
+  license: AGPL-3.0  # track E2; flag before anything ships to customers (CONTRACTS §2.4)
+
+lfm2-350m:
+  backend: peft
+  tasks: [text_generation]
+  exports: [gguf, safetensors, mlx]  # mlx only where mlx-lm imports (Apple silicon)
+  source: huggingface://LiquidAI/LFM2-350M
+  license: LFM-Open-License-v1.0  # track E2; flag before anything ships to customers

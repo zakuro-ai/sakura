@@ -11,9 +11,9 @@
 """
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Any, Tuple
 
-import cloudpickle
+import cloudpickle  # type: ignore[import-untyped]
 import numpy as np
 
 from sakura.worker.registry import HandlerRegistry
@@ -36,28 +36,28 @@ _DTYPE_TABLE = {
 }
 
 
-def _tensors_to_arrays(tensors: list[dict]) -> list[np.ndarray]:
-    out: list[np.ndarray] = []
+def _tensors_to_arrays(tensors: list[dict[str, Any]]) -> list[np.ndarray[Any, np.dtype[Any]]]:
+    out: list[np.ndarray[Any, np.dtype[Any]]] = []
     for t in tensors:
         dtype = _DTYPE_TABLE.get(t["dtype_id"], np.uint8)
-        arr: np.ndarray = np.frombuffer(t["data"], dtype=dtype)
+        arr: np.ndarray[Any, np.dtype[Any]] = np.frombuffer(t["data"], dtype=dtype)
         if t["shape"]:
             arr = arr.reshape(tuple(t["shape"]))
         out.append(arr)
     return out
 
 
-def handle_echo(tensors: list[dict], aux: bytes) -> Tuple[list[dict], bytes]:
+def handle_echo(tensors: list[dict[str, Any]], aux: bytes) -> Tuple[list[dict[str, Any]], bytes]:
     """Bounce tensors and aux back unchanged."""
     return (list(tensors), bytes(aux))
 
 
-def handle_heartbeat(tensors: list[dict], aux: bytes) -> Tuple[list[dict], bytes]:
+def handle_heartbeat(tensors: list[dict[str, Any]], aux: bytes) -> Tuple[list[dict[str, Any]], bytes]:
     """Liveness probe response."""
     return ([], b"PONG")
 
 
-def handle_exec_cloudpickled(tensors: list[dict], aux: bytes) -> Tuple[list[dict], bytes]:
+def handle_exec_cloudpickled(tensors: list[dict[str, Any]], aux: bytes) -> Tuple[list[dict[str, Any]], bytes]:
     """Run a cloudpickled callable + args. Aux on the wire = cloudpickled spec dict.
 
     Spec format:
@@ -65,7 +65,6 @@ def handle_exec_cloudpickled(tensors: list[dict], aux: bytes) -> Tuple[list[dict
     The decoded numpy arrays from `tensors` are passed as positional args BEFORE
     `args` so callers write `submit(fn, np_arr_1, np_arr_2, scalar=...)`.
     """
-    # nosemgrep: sakura.deserialization.cloudpickle-loads-untrusted
     spec = cloudpickle.loads(aux)
     fn = spec["fn"]
     extra_args = spec.get("args", ())

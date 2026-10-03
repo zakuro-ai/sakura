@@ -55,7 +55,7 @@ class Dispatcher(abc.ABC):
     def shutdown(self, *, timeout_s: float = 30.0) -> None:
         """Default: no-op. Subclasses with subprocesses or sockets override."""
 
-    def stats(self) -> dict:
+    def stats(self) -> dict[str, Any]:
         """Default: empty stats."""
         return {}
 
