@@ -1,0 +1,9 @@
+# audio_classification/fast@1 -- immutable once released (CONTRACTS §1.1).
+# Small-vocabulary keyword spotting (e.g. a few Speech Commands words).
+hyperparameters:
+  encoder: stacked_cnn
+  sample_rate: 16000
+  epochs: 5
+  batch_size: 32
+  learning_rate: 0.001
+  early_stop: -1

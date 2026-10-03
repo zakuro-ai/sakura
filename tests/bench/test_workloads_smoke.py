@@ -58,6 +58,7 @@ def test_cifar10_imagenet_shape_workload_builds():
 def test_distilbert_workload_runs_one_epoch():
     """Build DistilBERT + SST-2 workload, run 1 epoch via BaselineRunner.
     Tiny subset (64 train, 32 val) to keep CPU smoke under 90s."""
+    pytest.importorskip("transformers")  # bench extra; absent in the core CI env
     from sakura.bench.workloads.distilbert import make_workload as make_distilbert
 
     wl = make_distilbert(batch_size=16, epochs=1, n_train=64, n_val=32, max_length=32)

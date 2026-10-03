@@ -1,0 +1,11 @@
+# tabular/ecd@1 -- immutable once released (CONTRACTS §1.1).
+# Ludwig's default Encoder-Combiner-Decoder: a small deep net over tabular
+# features, for comparison against the GBM combiner.
+hyperparameters:
+  combiner: concat
+  fc_layers_size: 128
+  fc_layers_num: 2
+  epochs: 20
+  batch_size: 128
+  learning_rate: 0.001
+  early_stop: 5

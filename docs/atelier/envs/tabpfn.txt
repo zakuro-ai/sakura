@@ -1,0 +1,25 @@
+# sakura/atelier/backends/tabpfn.py -- exact pins verified on a single-GPU Linux host
+# (RTX 2080 Ti, CUDA 12.1 wheels), python 3.11, 2026-10-02.
+#
+# uv venv .venv --python 3.11
+# uv pip install --python .venv/bin/python torch \
+#     --index-url https://download.pytorch.org/whl/cu121
+# uv pip install --python .venv/bin/python \
+#     "tabpfn==2.1.3" scikit-learn onnx onnxruntime-gpu
+#
+# tabpfn==2.1.3 downloads the ungated TabPFN v2 prior-fitted weights straight
+# from Hugging Face on first fit() -- no Prior Labs account, no API key.
+# CONTRACTS.md §2.2: do NOT bump past 2.1.x -- releases >= 6 gate the weights
+# behind an account, and this project must never hold or borrow that key.
+
+torch==2.5.1+cu121
+tabpfn==2.1.3
+scikit-learn==1.6.1
+onnx==1.23.1
+onnxruntime-gpu==1.30.0
+
+# Licence: TabPFN v2 weights carry the Prior Labs licence (CONTRACTS §2.4).
+#
+# ONNX export status (see tabpfn.py's module docstring and this track's
+# development notes for the measured outcome): a bounded attempt only, may fail
+# and report why rather than ship a broken artifact.

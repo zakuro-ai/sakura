@@ -7,6 +7,7 @@ lightning = pytest.importorskip("lightning")
 torch = pytest.importorskip("torch")
 
 from sakura.adapters.lightning import LightningAdapter
+from sakura.events import OnEpochEnd, OnTrainBegin, OnTrainEnd
 from sakura.runtime import SakuraRuntime
 from sakura.service import BaseService
 

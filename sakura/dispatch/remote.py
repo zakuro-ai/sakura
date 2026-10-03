@@ -7,9 +7,12 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-import cloudpickle
+import cloudpickle  # type: ignore[import-untyped]
 import numpy as np
-import sakura_wire as _native
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import sakura_wire as _native
 
 from sakura.dispatch.base import Dispatcher, Future, Result
 
@@ -19,25 +22,24 @@ HANDLER_EXEC_CLOUDPICKLED = 0x0001
 class _WireFuture(Future):
     """Wraps a sakura_wire.Future and decodes the cloudpickled return value."""
 
-    def __init__(self, native_future: _native.Future):
+    def __init__(self, native_future: "_native.Future"):
         self._fut = native_future
 
     def result(self, timeout: Optional[float] = None) -> Result:
         wire_result = self._fut.result(timeout=timeout)
-        # nosemgrep: sakura.deserialization.cloudpickle-loads-untrusted
         value = cloudpickle.loads(wire_result.aux)
         if isinstance(value, BaseException):
             raise value
         return Result(value=value, elapsed_us=wire_result.elapsed_us)
 
     def done(self) -> bool:
-        return self._fut.done()
+        return bool(self._fut.done())
 
     def cancel(self) -> bool:
-        return self._fut.cancel()
+        return bool(self._fut.cancel())
 
 
-def _array_to_tensor_dict(arr: np.ndarray) -> dict:
+def _array_to_tensor_dict(arr: np.ndarray[Any, np.dtype[Any]]) -> dict[str, Any]:
     """Pack a numpy array into the tensor-dict shape sakura-wire expects."""
     if arr.dtype == np.float32:
         dtype_id = 0
@@ -66,6 +68,9 @@ class RemoteDispatcher(Dispatcher):
         if not uri.startswith("quic://"):
             raise ValueError(f"RemoteDispatcher requires quic:// URI, got: {uri}")
         self._uri = uri
+        # Lazy import: native wire loads on first dispatcher construction so
+        # `import sakura` works without the Rust extension installed.
+        import sakura_wire as _native
         tls = _native.TlsConfig(cert_der, server_name)
         self._dispatcher = _native.Dispatcher(uri, tls)
 
@@ -77,7 +82,7 @@ class RemoteDispatcher(Dispatcher):
         **kwargs: Any,
     ) -> Future:
         """Cloudpickle the callable + non-tensor args; ship tensor args as raw bytes."""
-        tensor_args: list[np.ndarray] = []
+        tensor_args: list[np.ndarray[Any, np.dtype[Any]]] = []
         non_tensor_args: list[Any] = []
         for a in args:
             if isinstance(a, np.ndarray):
@@ -96,7 +101,7 @@ class RemoteDispatcher(Dispatcher):
         # The native Dispatcher manages its own connection lifecycle.
         pass
 
-    def stats(self) -> dict:
+    def stats(self) -> dict[str, Any]:
         return {"kind": "remote", "uri": self._uri}
 
 

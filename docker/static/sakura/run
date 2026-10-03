@@ -1,9 +1,0 @@
-#!/bin/bash
-. /opt/zakuro/etc/profile.d/zk0.sh
-if [ -f /opt/zakuro/etc/profile.d/.env ]; then . /opt/zakuro/etc/profile.d/.env; fi
-
-# Change to the desired working directory
-cd /workspace
-
-export SAKURA_ROLE=0
-/opt/zakuro/bin/sakura $@ 

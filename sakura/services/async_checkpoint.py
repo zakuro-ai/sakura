@@ -14,14 +14,13 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Literal, Optional, Union
 
-from sakura._optional import load
 from sakura.dispatch.base import Dispatcher, Future
 from sakura.events import OnEpochEnd, OnTrainEnd
 from sakura.service import BaseService
 
 
-def _torch_save_writer(state, path):
-    torch = load("torch", extra="training")
+def _torch_save_writer(state: Any, path: str) -> dict[str, Any]:
+    import torch
     torch.save(state, path)
     return {"path": str(path)}
 
@@ -40,7 +39,7 @@ class AsyncCheckpoint(BaseService):
         metric: Optional[str] = None,
         mode: Literal["min", "max"] = "min",
         format: Literal["torch", "safetensors"] = "torch",
-        writer: Optional[Callable[[Any, str], dict]] = None,
+        writer: Optional[Callable[[Any, str], dict[str, Any]]] = None,
         keep: Optional[int] = 3,
     ):
         super().__init__()
@@ -53,7 +52,7 @@ class AsyncCheckpoint(BaseService):
         self._format = format
         self._writer = writer if writer is not None else _torch_save_writer
         self._keep = keep
-        self._history: list[dict] = []
+        self._history: list[dict[str, Any]] = []
         self._pending: list[Future] = []
         self._best_metric: Optional[float] = None
         os.makedirs(self._dir, exist_ok=True)
@@ -62,7 +61,7 @@ class AsyncCheckpoint(BaseService):
         self.requires = ()  # explicit (already default; left here for clarity)
 
     @property
-    def history(self) -> list[dict]:
+    def history(self) -> list[dict[str, Any]]:
         return list(self._history)
 
     def on_epoch_end(self, event: OnEpochEnd) -> None:
@@ -78,7 +77,7 @@ class AsyncCheckpoint(BaseService):
             self._pending.append(fut)
             # Reap done.
             self._reap_done()
-        except Exception as exc:  # noqa: BLE001
+        except BaseException as exc:  # noqa: BLE001
             self._history.append({"epoch": event.epoch, "skipped": True,
                                    "reason": type(exc).__name__})
 
@@ -90,8 +89,8 @@ class AsyncCheckpoint(BaseService):
                 v = r.value if hasattr(r, "value") else r
                 if isinstance(v, dict):
                     self._history.append(v)
-            except Exception:
-                pass  # best-effort: checkpoint result unavailable
+            except BaseException:
+                pass
         self._pending.clear()
 
     def _ext(self) -> str:
@@ -127,8 +126,8 @@ class AsyncCheckpoint(BaseService):
                     v = r.value if hasattr(r, "value") else r
                     if isinstance(v, dict):
                         self._history.append(v)
-                except Exception:
-                    pass  # best-effort
+                except BaseException:
+                    pass
             else:
                 still.append(fut)
         self._pending = still

@@ -21,8 +21,6 @@ dump.rdb
 .env
 models/
 .coverage
-coverage.xml
-htmlcov/
 
 # Rust
 /target/
@@ -37,5 +35,3 @@ htmlcov/
 .python-version
 .venv/
 
-# Internal design docs / plans — kept locally, not pushed.
-docs/superpowers/

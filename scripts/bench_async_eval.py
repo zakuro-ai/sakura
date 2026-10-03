@@ -25,6 +25,7 @@ import torch
 
 from sakura.adapters.ddp import DDPAdapter
 from sakura.dispatch import ThreadDispatcher
+from sakura.events import OnEpochEnd
 from sakura.runtime import SakuraRuntime
 from sakura.services.async_eval import AsyncEval
 

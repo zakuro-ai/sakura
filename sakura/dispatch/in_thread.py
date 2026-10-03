@@ -41,14 +41,14 @@ class InThreadDispatcher(Dispatcher):
         t0 = time.perf_counter_ns()
         try:
             value = callable(*args, **kwargs)
-        except Exception as exc:
+        except BaseException as exc:  # noqa: BLE001
             return _ResolvedFuture(exc=exc, elapsed_us=(time.perf_counter_ns() - t0) // 1000)
         return _ResolvedFuture(value=value, elapsed_us=(time.perf_counter_ns() - t0) // 1000)
 
     def shutdown(self, *, timeout_s: float = 30.0) -> None:
         pass
 
-    def stats(self) -> dict:
+    def stats(self) -> dict[str, Any]:
         return {"kind": "in_thread"}
 
 

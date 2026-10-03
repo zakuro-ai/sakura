@@ -1,9 +1,8 @@
 """ActivationCheckpoint — wrap matching submodules with torch.utils.checkpoint."""
 from __future__ import annotations
 
-from typing import Literal, Union
+from typing import Any, Callable, Literal, Optional, Union
 
-from sakura._optional import load
 from sakura.events import OnTrainBegin
 from sakura.service import BaseService
 
@@ -15,7 +14,7 @@ class ActivationCheckpoint(BaseService):
     def __init__(
         self,
         *,
-        target_types: tuple = (),
+        target_types: tuple[type, ...] = (),
         selective: Union[bool, int, Literal["auto"]] = True,
         non_reentrant: bool = True,
         preserve_rng_state: bool = True,
@@ -29,10 +28,10 @@ class ActivationCheckpoint(BaseService):
         self._preserve_rng_state = preserve_rng_state
         self.wrapped_count = 0
 
-    def on_train_begin(self, event: OnTrainBegin):
-        _ck = load("torch.utils.checkpoint", extra="training")
+    def on_train_begin(self, event: OnTrainBegin) -> None:
+        import torch.utils.checkpoint as _ck
 
-        target_modules = []
+        target_modules: list[Any] = []
         for module in event.model.modules():
             if isinstance(module, self._target_types):
                 target_modules.append(module)
@@ -55,8 +54,8 @@ class ActivationCheckpoint(BaseService):
             use_reentrant = not self._non_reentrant
             preserve_rng = self._preserve_rng_state
 
-            def make_wrapper(orig):
-                def _ckpt_forward(*args, **kwargs):
+            def make_wrapper(orig: Callable[..., Any]) -> Callable[..., Any]:
+                def _ckpt_forward(*args: Any, **kwargs: Any) -> Any:
                     return _ck.checkpoint(
                         orig, *args, use_reentrant=use_reentrant,
                         preserve_rng_state=preserve_rng, **kwargs,

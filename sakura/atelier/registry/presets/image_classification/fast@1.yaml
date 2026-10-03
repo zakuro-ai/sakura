@@ -1,0 +1,13 @@
+# image_classification/fast@1 -- immutable once released (CONTRACTS §1.1).
+# CIFAR-10-sized smoke runs: a ResNet-18 encoder, few epochs, small images.
+hyperparameters:
+  encoder: resnet18
+  pretrained: true
+  # 64, not 32: an ImageNet backbone's stem downsamples 32x.
+  image_size: 64
+  epochs: 3
+  batch_size: 64
+  # 1e-4, not 1e-3: Adam at 1e-3 erodes a pretrained backbone's features.
+  # Measured on CIFAR-10 20k/2k x3 epochs: 0.485 -> 0.594 -> 0.599.
+  learning_rate: 0.0001
+  early_stop: -1  # phase-1 smoke runs want every epoch's point, not an early cut

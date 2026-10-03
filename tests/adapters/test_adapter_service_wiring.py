@@ -6,6 +6,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from sakura.adapters.ddp import DDPAdapter
+from sakura.events import OnTrainBegin, OnTrainEnd
 from sakura.runtime import SakuraRuntime
 from sakura.services.mixed_precision import MixedPrecision
 

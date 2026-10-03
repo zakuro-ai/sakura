@@ -11,9 +11,9 @@ GradScaler is a no-op on CPU.
 """
 from __future__ import annotations
 
+import warnings
 from typing import Any, Literal, Optional, Union
 
-from sakura._optional import load
 from sakura.events import OnOptimizerStep, OnTrainBegin, OnTrainEnd, OnTrainStepBegin
 from sakura.service import BaseService
 
@@ -40,16 +40,17 @@ class MixedPrecision(BaseService):
         self._loss_scale = loss_scale
         self._grad_clip = grad_clip
         self._cache_enabled = cache_enabled
-        self._scaler: Any = None
-        self._autocast_ctx = None
-        self._original_forward: bool | None = None
+        self._scaler: Optional[Any] = None
+        self._autocast_ctx: Optional[Any] = None
+        self._original_forward: Optional[bool] = None
+        self._bf16_fallback_warned = False
 
     def on_install(self, runtime: Any) -> None:
         # No-op at install — we wait for OnTrainBegin to inspect the model device.
         pass
 
     def on_train_begin(self, event: OnTrainBegin) -> None:
-        torch = load("torch", extra="training")
+        import torch
 
         # Determine device + actual dtype.
         device_type = self._device_type_from(event.model)
@@ -71,7 +72,7 @@ class MixedPrecision(BaseService):
                     init_scale=init_scale,
                 )
             else:
-                self._scaler = torch.cuda.amp.GradScaler(  # type: ignore[attr-defined]
+                self._scaler = torch.cuda.amp.GradScaler(
                     enabled=True,
                     init_scale=init_scale,
                 )
@@ -82,7 +83,7 @@ class MixedPrecision(BaseService):
         original_forward = event.model.forward
         autocast_dtype = actual_dtype
 
-        def _wrapped_forward(*args, **kwargs):
+        def _wrapped_forward(*args: Any, **kwargs: Any) -> Any:
             with torch.autocast(device_type=device_type, dtype=autocast_dtype,
                                 enabled=True, cache_enabled=self._cache_enabled):
                 return original_forward(*args, **kwargs)
@@ -120,7 +121,7 @@ class MixedPrecision(BaseService):
         if self._scaler is not None:
             self._scaler.unscale_(opt)
         if self._grad_clip is not None:
-            torch = load("torch", extra="training")
+            import torch
 
             params = []
             for group in opt.param_groups:
@@ -129,7 +130,7 @@ class MixedPrecision(BaseService):
 
     # ............................................. runtime-coordinated hooks
 
-    def wrap_loss(self, loss):
+    def wrap_loss(self, loss: Any) -> Any:
         """fp16: scale the loss so backward produces representable gradients.
 
         bf16/fp8/auto: passthrough. Called by SakuraRuntime.scale_loss
@@ -139,7 +140,7 @@ class MixedPrecision(BaseService):
             return self._scaler.scale(loss)
         return loss
 
-    def optimizer_step(self, optimizer) -> bool:
+    def optimizer_step(self, optimizer: Any) -> bool:
         """fp16: drive the step via scaler (inf/nan check + scale-factor update).
 
         Returns True for fp16 so the loop's default opt.step() is skipped.
@@ -163,23 +164,41 @@ class MixedPrecision(BaseService):
         except Exception:
             return "cpu"
 
-    def _resolve_dtype(self, device_type: str):
-        torch = load("torch", extra="training")
+    def _resolve_dtype(self, device_type: str) -> Any:
+        import torch
+
+        cuda = torch.cuda.is_available()
+        # Native bf16 requires compute capability >= 8.0 (Ampere). Pre-Ampere
+        # GPUs (sm < 80, e.g. Turing 2080 Ti) have NO bf16 datapath: autocast
+        # bf16 falls back to emulation that is catastrophically slow (measured
+        # ~16x slowdown on a 2080 Ti), while fp16 runs on the tensor cores.
+        # NOTE: torch.cuda.is_bf16_supported() returns True on Turing because it
+        # counts *emulation* as "supported", so we check the capability directly.
+        bf16_native = cuda and torch.cuda.get_device_capability()[0] >= 8
+
         if self._dtype == "auto":
-            if torch.cuda.is_available():
-                cap = torch.cuda.get_device_capability()
-                # Ampere+ = bf16; older = fp16.
-                return torch.bfloat16 if cap[0] >= 8 else torch.float16
-            return torch.bfloat16
-        return {
-            "fp16": torch.float16,
-            "bf16": torch.bfloat16,
-            "fp8": (
-                torch.float8_e4m3fn
-                if hasattr(torch, "float8_e4m3fn")
-                else torch.bfloat16
-            ),
-        }[self._dtype]
+            if cuda:
+                return torch.bfloat16 if bf16_native else torch.float16
+            return torch.bfloat16  # CPU autocast handles bf16 fine
+
+        if self._dtype == "fp16":
+            return torch.float16
+        if self._dtype == "fp8":
+            return torch.float8_e4m3fn if hasattr(torch, "float8_e4m3fn") else torch.bfloat16
+
+        # explicit bf16: hardware-gate it on CUDA, falling back to fp16 (which
+        # still gets the GradScaler path below) rather than emulated bf16.
+        if cuda and not bf16_native:
+            if not self._bf16_fallback_warned:
+                warnings.warn(
+                    "mixed_precision: bf16 requested but this GPU has no native bf16 "
+                    "(pre-Ampere, e.g. Turing); falling back to fp16 to avoid a large "
+                    "emulation slowdown.",
+                    stacklevel=2,
+                )
+                self._bf16_fallback_warned = True
+            return torch.float16
+        return torch.bfloat16
 
 
 __all__ = ["MixedPrecision"]

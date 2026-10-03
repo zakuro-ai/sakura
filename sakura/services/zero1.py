@@ -29,7 +29,7 @@ class ZeRO1(BaseService):
         self._original_optimizer: Optional[Any] = None
         self._sharded: Optional[Any] = None
 
-    def on_train_begin(self, event: OnTrainBegin):
+    def on_train_begin(self, event: OnTrainBegin) -> None:
         self._original_optimizer = event.optimizer
         if event.world_size > 1:
             from sakura.zero.sharded_optimizer import ShardedOptimizer
@@ -37,7 +37,7 @@ class ZeRO1(BaseService):
                 event.optimizer, process_group=self._process_group
             )
 
-    def on_optimizer_step(self, event: OnOptimizerStep):
+    def on_optimizer_step(self, event: OnOptimizerStep) -> None:
         if self._sharded is not None:
             self._sharded.step()
         else:
@@ -45,12 +45,12 @@ class ZeRO1(BaseService):
             if hasattr(opt, "step"):
                 opt.step()
 
-    def on_train_end(self, event: OnTrainEnd):
+    def on_train_end(self, event: OnTrainEnd) -> None:
         # Nothing to restore — underlying optimizer was never replaced; we
         # just kept a wrapper alongside.
         self._sharded = None
 
-    def gather_state_dict(self, model) -> dict:
+    def gather_state_dict(self, model: Any) -> dict[str, Any]:
         return dict(model.state_dict())
 
 

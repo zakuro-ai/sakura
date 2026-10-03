@@ -1,6 +1,8 @@
 """HFAdapter — transformers.TrainerCallback that emits Sakura runtime events."""
 from __future__ import annotations
 
+from typing import Any
+
 try:
     from transformers import TrainerCallback
 except ImportError:  # pragma: no cover
@@ -10,6 +12,7 @@ except ImportError:  # pragma: no cover
 from sakura.adapters.base import Adapter
 from sakura.events import (
     OnEpochEnd,
+    OnError,
     OnOptimizerStep,
     OnTrainBegin,
     OnTrainEnd,
@@ -18,12 +21,12 @@ from sakura.events import (
 from sakura.runtime import SakuraRuntime
 
 
-class HFAdapter(TrainerCallback, Adapter):
+class HFAdapter(TrainerCallback, Adapter):  # type: ignore[misc]
     """transformers.TrainerCallback that translates HF Trainer hooks into Sakura events."""
 
     min_transformers_version: str = "4.38"
 
-    def __init__(self, runtime: SakuraRuntime, *, rank: int = 0, world_size: int = 1):
+    def __init__(self, runtime: SakuraRuntime, *, rank: int = 0, world_size: int = 1) -> None:
         TrainerCallback.__init__(self)
         Adapter.__init__(self, runtime)
         self._rank = rank
@@ -31,7 +34,7 @@ class HFAdapter(TrainerCallback, Adapter):
 
     # ........................................................... lifecycle
 
-    def on_train_begin(self, args, state, control, **kw):
+    def on_train_begin(self, args: Any, state: Any, control: Any, **kw: Any) -> None:
         self.emit(OnTrainBegin(
             model=kw.get("model"),
             optimizer=kw.get("optimizer"),
@@ -40,7 +43,7 @@ class HFAdapter(TrainerCallback, Adapter):
             rank=self._rank, world_size=self._world_size,
         ))
 
-    def on_step_begin(self, args, state, control, **kw):
+    def on_step_begin(self, args: Any, state: Any, control: Any, **kw: Any) -> None:
         self.emit(OnTrainStepBegin(
             model=kw.get("model"),
             batch=kw.get("inputs"),
@@ -48,15 +51,15 @@ class HFAdapter(TrainerCallback, Adapter):
             rank=self._rank, world_size=self._world_size,
         ))
 
-    def on_pre_optimizer_step(self, args, state, control, **kw):
+    def on_pre_optimizer_step(self, args: Any, state: Any, control: Any, **kw: Any) -> None:
         self.emit(OnOptimizerStep(
             optimizer=kw.get("optimizer"),
             rank=self._rank, world_size=self._world_size,
         ))
 
-    def on_epoch_end(self, args, state, control, **kw):
+    def on_epoch_end(self, args: Any, state: Any, control: Any, **kw: Any) -> None:
         # Pull most-recent metrics from state.log_history if present.
-        metrics: dict = {}
+        metrics: dict[str, Any] = {}
         log = getattr(state, "log_history", None)
         if log:
             metrics = dict(log[-1])
@@ -68,7 +71,7 @@ class HFAdapter(TrainerCallback, Adapter):
             rank=self._rank, world_size=self._world_size,
         ))
 
-    def on_train_end(self, args, state, control, **kw):
+    def on_train_end(self, args: Any, state: Any, control: Any, **kw: Any) -> None:
         self.emit(OnTrainEnd(
             model=kw.get("model"),
             history=list(getattr(state, "log_history", []) or []),

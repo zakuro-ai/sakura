@@ -13,7 +13,7 @@ from sakura.dispatch.base import Dispatcher, Future, Result
 
 
 class _ZkFuture(Future):
-    def __init__(self, value, exc, elapsed_us):
+    def __init__(self, value: Any, exc: Optional[BaseException], elapsed_us: int) -> None:
         self._value = value
         self._exc = exc
         self._elapsed_us = elapsed_us
@@ -47,19 +47,19 @@ class ZakuroDispatcher(Dispatcher):
 
         # Wrap user callable with @zk.fn so Zakuro can ship it.
         @zk.fn
-        def _wrapped(*a, **kw):
+        def _wrapped(*a: Any, **kw: Any) -> Any:
             return callable(*a, **kw)
 
         t0 = time.perf_counter_ns()
         try:
             value = _wrapped.to(self._zk_compute)(*args, **kwargs)
-        except Exception as exc:
+        except BaseException as exc:  # noqa: BLE001
             return _ZkFuture(value=None, exc=exc,
                               elapsed_us=(time.perf_counter_ns() - t0) // 1000)
         return _ZkFuture(value=value, exc=None,
                           elapsed_us=(time.perf_counter_ns() - t0) // 1000)
 
-    def stats(self) -> dict:
+    def stats(self) -> dict[str, Any]:
         return {"kind": "zakuro"}
 
 

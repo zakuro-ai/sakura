@@ -11,8 +11,8 @@ pub fn cast_f32_to_f16(input: &[u8]) -> Vec<u8> {
     );
     let n = input.len() / 4;
     let mut out = Vec::with_capacity(n * 2);
-    for chunk in input.chunks_exact(4) {
-        let v = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for chunk in input.as_chunks::<4>().0 {
+        let v = f32::from_le_bytes(*chunk);
         let h = f16::from_f32(v);
         out.extend_from_slice(&h.to_le_bytes());
     }
@@ -27,8 +27,8 @@ pub fn cast_f16_to_f32(input: &[u8]) -> Vec<u8> {
     );
     let n = input.len() / 2;
     let mut out = Vec::with_capacity(n * 4);
-    for chunk in input.chunks_exact(2) {
-        let h = f16::from_le_bytes([chunk[0], chunk[1]]);
+    for chunk in input.as_chunks::<2>().0 {
+        let h = f16::from_le_bytes(*chunk);
         let v = h.to_f32();
         out.extend_from_slice(&v.to_le_bytes());
     }
@@ -43,8 +43,8 @@ pub fn cast_f32_to_bf16(input: &[u8]) -> Vec<u8> {
     );
     let n = input.len() / 4;
     let mut out = Vec::with_capacity(n * 2);
-    for chunk in input.chunks_exact(4) {
-        let v = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for chunk in input.as_chunks::<4>().0 {
+        let v = f32::from_le_bytes(*chunk);
         let h = bf16::from_f32(v);
         out.extend_from_slice(&h.to_le_bytes());
     }
@@ -59,8 +59,8 @@ pub fn cast_bf16_to_f32(input: &[u8]) -> Vec<u8> {
     );
     let n = input.len() / 2;
     let mut out = Vec::with_capacity(n * 4);
-    for chunk in input.chunks_exact(2) {
-        let h = bf16::from_le_bytes([chunk[0], chunk[1]]);
+    for chunk in input.as_chunks::<2>().0 {
+        let h = bf16::from_le_bytes(*chunk);
         let v = h.to_f32();
         out.extend_from_slice(&v.to_le_bytes());
     }
@@ -81,8 +81,10 @@ mod tests {
 
     fn bytes_to_f32(input: &[u8]) -> Vec<f32> {
         input
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
             .collect()
     }
 

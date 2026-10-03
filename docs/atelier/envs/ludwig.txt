@@ -1,0 +1,43 @@
+# Ludwig backend runner venv -- the recipe the GPU runners are deployed from
+# (Linux GPU hosts), verified by six CIFAR-10 runs on an
+# RTX 2080 Ti on 2026-10-02 (20k/2k x3 epochs: 0.599, ONNX 0.600).
+#
+# bitsandbytes is UNINSTALLED after the ludwig install. ludwig==0.11.0 pins
+# `bitsandbytes<0.41.0` (resolves 0.40.2), and on a CUDA 13 host that version
+# raises RuntimeError("CUDA Setup failed") at import -- not ImportError, so it
+# escapes the `try: import bitsandbytes / except ImportError` guards ludwig
+# wraps every bnb import in, and `import ludwig.api` dies (seen on a GPU host;
+# BNB_CUDA_VERSION is not honoured by 0.40.2). With bnb absent those guards
+# set bnb=None and ludwig runs; it only loses 8-bit optimizers, which no
+# atelier preset uses. Verified 2026-10-02.
+#
+# Build (what deploy_atelier_runner.sh runs):
+#   uv venv -p 3.11 ludwig
+#   uv pip install --python ludwig/bin/python torch==2.14.1 \
+#       --index-url https://download.pytorch.org/whl/cu130
+#   uv pip install --python ludwig/bin/python ludwig==0.11.0 onnx==1.23.1 \
+#       onnxruntime-gpu==1.30.0 pandas scikit-learn \
+#       datasets soundfile pyarrow torchcodec==0.17.0 \
+#       --extra-index-url https://download.pytorch.org/whl/cu130  "<sakura's own deps: tqdm numpy gnutools-python
+#       chardet lightning ipython charset-normalizer zakuro-ai cloudpickle
+#       pydantic pyyaml>"
+#   uv pip uninstall --python ludwig/bin/python bitsandbytes
+#
+# CUDA 13 wheels need compute capability >= 7.5 (Turing). Pascal cards
+# (e.g. GTX 1070, Quadro P620) are NOT supported by this venv --
+# build it with the cu121 torch index there instead.
+#
+# Resolved versions actually installed (`pip freeze` subset):
+torch==2.14.1+cu130
+ludwig==0.11.0
+onnx==1.23.1
+onnxruntime-gpu==1.30.0
+torchcodec==0.17.0+cu130  # torchaudio 2.11 `load` (Ludwig audio preprocessing) raises without it
+pandas
+scikit-learn
+datasets
+soundfile
+pyarrow
+
+# Ludwig 0.11.0 has no GBM/LightGBM model type; the registry therefore has no
+# ludwig_gbm entry (tabular presets: tabular/ecd@1 and tabular/tabpfn@1).

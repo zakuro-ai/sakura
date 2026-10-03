@@ -57,7 +57,7 @@ class OnEpochEnd(Event):
     epoch: int
     model: Any
     optimizer: Any
-    metrics: dict = field(default_factory=dict)
+    metrics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -69,13 +69,13 @@ class OnSave(Event):
 @dataclass(frozen=True)
 class OnTrainEnd(Event):
     model: Any
-    history: list
+    history: list[Any]
 
 
 @dataclass(frozen=True)
 class OnError(Event):
     exc: BaseException
-    context: dict = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 __all__ = [

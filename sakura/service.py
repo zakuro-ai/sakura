@@ -18,8 +18,8 @@ class Service(Protocol):
     priority: int
     requires: tuple[str, ...]
 
-    def on_install(self, runtime: Any) -> None: pass
-    def on_event(self, event: Event) -> None: pass
+    def on_install(self, runtime: Any) -> None: ...
+    def on_event(self, event: Event) -> None: ...
 
 
 class BaseService:
@@ -34,7 +34,7 @@ class BaseService:
     priority: int = -1
     requires: tuple[str, ...] = ()
 
-    def __init__(self):
+    def __init__(self) -> None:
         if not self.name:
             raise TypeError(f"{type(self).__name__}: 'name' must be set as a class attribute")
         if self.priority < 0:

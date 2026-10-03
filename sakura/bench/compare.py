@@ -1,6 +1,7 @@
 """Comparison utilities for RunReport JSON files."""
 from __future__ import annotations
 
+import json
 from typing import Iterable, List
 
 from sakura.bench.harness import RunReport
@@ -18,8 +19,10 @@ def render_markdown_table(reports: list[RunReport]) -> str:
     """Render a side-by-side markdown table of reports."""
     if not reports:
         return "(no reports)"
-    headers = ["workload", "framework", "services", "elapsed_secs", "samples_per_sec",
-               "peak_gpu_mem_mb"]
+    headers = ["workload", "framework", "services", "elapsed_secs",
+               "samples_per_sec", "tokens_per_sec",
+               "gpu_util_mean_pct", "peak_gpu_mem_mb", "gpu_mem_used_peak_mb",
+               "reached_target"]
     metric_names = sorted({k for r in reports for k in r.final_metrics.keys()})
     headers.extend(metric_names)
     rows = []
@@ -31,7 +34,11 @@ def render_markdown_table(reports: list[RunReport]) -> str:
             r.workload, r.framework, services,
             f"{r.elapsed_secs:.2f}",
             f"{r.samples_per_sec:.0f}",
+            f"{r.tokens_per_sec:.0f}",
+            f"{r.gpu_util_mean_pct:.1f}",
             f"{r.peak_gpu_mem_mb:.0f}",
+            f"{r.gpu_mem_used_peak_mb:.0f}",
+            "" if r.reached_target is None else str(r.reached_target),
         ]
         for m in metric_names:
             v = r.final_metrics.get(m)
@@ -48,10 +55,18 @@ def speedup_summary(baseline: RunReport, sakura: RunReport) -> str:
     pct = (delta / baseline.elapsed_secs) * 100 if baseline.elapsed_secs else 0
     factor = baseline.elapsed_secs / sakura.elapsed_secs if sakura.elapsed_secs else float("inf")
     faster = "sakura" if delta > 0 else "baseline"
+    if baseline.tokens_per_sec:
+        tok_part = (
+            f"tokens/sec {baseline.tokens_per_sec:.0f}->{sakura.tokens_per_sec:.0f} "
+            f"({sakura.tokens_per_sec / baseline.tokens_per_sec:.2f}x)"
+        )
+    else:
+        tok_part = "tokens/sec n/a"
     return (
         f"{baseline.workload}: {faster} {abs(pct):.1f}% faster "
         f"({factor:.2f}x; baseline={baseline.elapsed_secs:.2f}s, "
-        f"sakura={sakura.elapsed_secs:.2f}s)"
+        f"sakura={sakura.elapsed_secs:.2f}s) | {tok_part} | "
+        f"gpu-util {baseline.gpu_util_mean_pct:.0f}%->{sakura.gpu_util_mean_pct:.0f}%"
     )
 
 

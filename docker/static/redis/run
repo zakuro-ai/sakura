@@ -1,8 +1,0 @@
-#!/bin/bash
-
-# Change to the desired working directory
-cd /workspace
-
-export SAKURA_ROLE=1
-cd /tmp
-exec s6-setuidgid foo redis-server

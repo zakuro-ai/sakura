@@ -13,7 +13,6 @@ import os
 import time
 from typing import Literal, Optional
 
-from sakura._optional import load
 from sakura.events import OnTrainBegin, OnTrainStepBegin
 from sakura.service import BaseService
 
@@ -42,7 +41,7 @@ class Compile(BaseService):
         self.first_step_secs: Optional[float] = None
 
     def on_train_begin(self, event: OnTrainBegin) -> None:
-        torch = load("torch", extra="training")
+        import torch
 
         os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", self._cache_dir)
         # Mark as "attempted" before the compile call — even if torch.compile
@@ -50,14 +49,14 @@ class Compile(BaseService):
         # have fulfilled the contract of "attempted to install compile".
         self.compiled_called = True
         try:
-            event.model.forward = torch.compile(  # type: ignore[attr-defined]
+            event.model.forward = torch.compile(
                 event.model.forward,
                 mode=self._mode,
                 backend=self._backend,
                 dynamic=self._dynamic,
                 fullgraph=self._fullgraph,
             )
-        except Exception:
+        except BaseException:
             # Compile failed — fall back to eager. compiled_called remains True
             # (we attempted; the result is eager fallback).
             pass

@@ -35,7 +35,7 @@ from sakura.dispatch.base import Dispatcher, Future, Result
 class _ThreadFuture(Future):
     """Sakura Future wrapping a stdlib concurrent.futures.Future."""
 
-    def __init__(self, std_future: _StdFuture, t_submit: int):
+    def __init__(self, std_future: _StdFuture[Any], t_submit: int):
         self._fut = std_future
         self._t_submit = t_submit
 
@@ -89,7 +89,7 @@ class ThreadDispatcher(Dispatcher):
         # on Python 3.9+ where the pool may release pending tasks early.
         self._pool.shutdown(wait=True, cancel_futures=True)
 
-    def stats(self) -> dict:
+    def stats(self) -> dict[str, Any]:
         return {"kind": "thread"}
 
 

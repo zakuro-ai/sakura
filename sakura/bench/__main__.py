@@ -11,7 +11,7 @@ import argparse
 import json
 import os
 import sys
-from typing import Optional
+from typing import Any, Callable, Optional, cast
 
 from sakura.bench.harness import BaselineRunner, SakuraRunner, Workload
 
@@ -25,6 +25,8 @@ _WORKLOAD_REGISTRY = {
     "llama3-1b-finetune": "sakura.bench.workloads.llama:make_workload",
     "mistral-7b-lora": "sakura.bench.workloads.mistral:make_workload",
     "distilbert-glue": "sakura.bench.workloads.glue:make_workload",
+    "gpt2-124m": "sakura.bench.workloads.gpt2:make_workload",
+    "asr-deepspeech": "sakura.bench.workloads.asr:make_workload",
 }
 
 
@@ -38,10 +40,10 @@ def _resolve_workload(name: str) -> Workload:
     import importlib
     mod = importlib.import_module(module_path)
     factory = getattr(mod, attr)
-    return factory()
+    return cast(Workload, factory())
 
 
-def _make_async_eval(kwarg, workload):
+def _make_async_eval(kwarg: Optional[str], workload: Workload) -> Any:
     """Build an AsyncEval bridged to the workload's eval_fn.
 
     The harness loop populates `_bench_snapshot["state_dict"]` after each
@@ -60,15 +62,16 @@ def _make_async_eval(kwarg, workload):
 
     # Bridge state: state_dict snapshot updated each epoch by the harness;
     # val_x / val_y materialized lazily on first eval call from val_loader.
-    snapshot: dict = {"state_dict": None, "val_loader": None,
-                      "val_x": None, "val_y": None}
+    snapshot: dict[str, Any] = {"state_dict": None, "val_loader": None,
+                                "val_x": None, "val_y": None}
 
-    def _materialize_val(loader):
+    def _materialize_val(loader: Any) -> tuple[Any, Any]:
         import torch
         xs, ys = [], []
         for batch in loader:
             if isinstance(batch, (tuple, list)) and len(batch) == 2:
-                xs.append(batch[0]); ys.append(batch[1])
+                xs.append(batch[0])
+                ys.append(batch[1])
             else:
                 # Bail to the loader path for non-(x, y) workloads.
                 return None, None
@@ -76,7 +79,7 @@ def _make_async_eval(kwarg, workload):
             return None, None
         return torch.cat(xs), torch.cat(ys)
 
-    def bridged_eval_fn(epoch: int, payload):
+    def bridged_eval_fn(epoch: int, payload: Any) -> dict[str, Any]:
         import torch
         sd = snapshot["state_dict"]
         if sd is None:
@@ -103,7 +106,8 @@ def _make_async_eval(kwarg, workload):
         loss_sum = 0.0
         with torch.no_grad():
             for i in range(0, val_x.shape[0], bs):
-                xb = val_x[i:i+bs]; yb = val_y[i:i+bs]
+                xb = val_x[i:i+bs]
+                yb = val_y[i:i+bs]
                 logits = m(xb)
                 loss_sum += float(torch.nn.functional.cross_entropy(logits, yb, reduction="sum"))
                 correct += int((logits.argmax(dim=-1) == yb).sum())
@@ -112,18 +116,75 @@ def _make_async_eval(kwarg, workload):
                 "val_acc": correct / max(total, 1),
                 "epoch": epoch}
 
+    def sync_eval_fn(model: Any, val_loader: Any) -> dict[str, Any]:
+        # Adaptive-gate sync/calibration path: evaluate a CPU copy of the live
+        # model so eval works regardless of the training model's device.  Using
+        # a CPU copy:
+        # (a) avoids device-placement mismatches when training on GPU but the
+        #     workload's eval_fn loads data onto CPU (the common bench case);
+        # (b) mirrors the async path which also CPU-materialises a state_dict
+        #     snapshot in the eval thread — so calibration cost is an
+        #     apples-to-apples comparison and the A/B gate is fair.
+        import torch
+        sd = {k: v.detach().cpu() if hasattr(v, "detach") else v
+              for k, v in model.state_dict().items()}
+        cpu_model = workload.make_model()
+        cpu_model.load_state_dict(sd)
+        cpu_model.eval()
+        with torch.no_grad():
+            return workload.eval_fn(cpu_model, val_loader)
+
+    def device_eval_fn(model: Any, val_loader: Any) -> dict[str, Any]:
+        # On-device eval path: evaluate the LIVE model where it trains. The
+        # workload's eval_fn moves batches to the model's device, so GPU training
+        # -> GPU eval (far faster than the CPU copy for compute-bound models like
+        # an RNN). The warmup profiler uses this to decide whether overlapping a
+        # CPU eval is even worth it; if not, eval runs here synchronously.
+        import torch
+        model.eval()
+        with torch.no_grad():
+            return workload.eval_fn(model, val_loader)
+
+    def cpu_probe_fn(model: Any) -> float:
+        # Cheap estimate of the *full* CPU-eval cost: time ONE val batch on a CPU
+        # copy and scale by the batch count, so the warmup profiler doesn't pay a
+        # whole (possibly slow) CPU eval just to measure it. Returns milliseconds.
+        import time
+        import torch
+        loader = snapshot["val_loader"]
+        batches = list(loader) if loader is not None else []
+        if not batches:
+            return 0.0
+        sd = {k: v.detach().cpu() if hasattr(v, "detach") else v
+              for k, v in model.state_dict().items()}
+        cpu_model = workload.make_model()
+        cpu_model.load_state_dict(sd)
+        cpu_model.eval()
+        t0 = time.perf_counter()
+        with torch.no_grad():
+            workload.eval_fn(cpu_model, [batches[0]])
+        per_batch_ms = (time.perf_counter() - t0) * 1e3
+        return per_batch_ms * len(batches)
+
     svc = AsyncEval(
         eval_fn=bridged_eval_fn,
         eval_payload=None,
         dispatcher=dispatcher,
+        sync_eval_fn=sync_eval_fn,   # bug #1 fix: arms the adaptive gate
+        device_eval_fn=device_eval_fn,  # warmup profiler: measure on-device eval
+        cpu_probe_fn=cpu_probe_fn,      # warmup profiler: cheap CPU-eval estimate
+        adaptive=True,
+        calibration_epochs=2,
+        trial_epochs=2,
+        total_epochs=workload.epochs,
         max_pending=1,
-        on_backpressure="block",
+        on_backpressure="skip",  # never stall training; skip eval if it can't keep up
     )
-    svc._bench_snapshot = snapshot  # bridge surface read by the harness loop
+    svc._bench_snapshot = snapshot  # type: ignore[attr-defined]  # bridge surface read by the harness loop
     return svc
 
 
-def _resolve_dispatcher(kind):
+def _resolve_dispatcher(kind: Optional[str]) -> Any:
     """Map a CLI dispatcher kind string to a Dispatcher instance.
 
     Shared by `async_eval` and `async_checkpoint` factories.
@@ -144,7 +205,7 @@ def _resolve_dispatcher(kind):
     )
 
 
-def _make_async_checkpoint(kwarg, workload):
+def _make_async_checkpoint(kwarg: Optional[str], workload: Workload) -> Any:
     """Build an AsyncCheckpoint that snapshots the model each epoch.
 
     The harness loop populates `_bench_snapshot["state_dict"]` after each
@@ -159,11 +220,11 @@ def _make_async_checkpoint(kwarg, workload):
     from sakura.services.async_checkpoint import AsyncCheckpoint
 
     dispatcher = _resolve_dispatcher(kwarg)
-    snapshot: dict = {"state_dict": None, "val_loader": None,
-                      "val_x": None, "val_y": None}
+    snapshot: dict[str, Any] = {"state_dict": None, "val_loader": None,
+                                "val_x": None, "val_y": None}
     out_dir = tempfile.mkdtemp(prefix=f"sakura-bench-ckpt-{workload.name}-")
 
-    def state_provider():
+    def state_provider() -> Any:
         return snapshot["state_dict"]
 
     svc = AsyncCheckpoint(
@@ -173,24 +234,60 @@ def _make_async_checkpoint(kwarg, workload):
         every="epoch",
         keep=None,  # bench mode: don't bother rotating; tempdir is disposable
     )
-    svc._bench_snapshot = snapshot  # bridge surface — same shape as async_eval
-    svc._bench_out_dir = out_dir    # exposed for tests / cleanup
+    svc._bench_snapshot = snapshot  # type: ignore[attr-defined]  # bridge surface — same shape as async_eval
+    svc._bench_out_dir = out_dir  # type: ignore[attr-defined]  # exposed for tests / cleanup
     return svc
 
 
-_SERVICE_FACTORIES = {
+def _make_activation_checkpoint(kwarg: Optional[str], workload: Workload) -> Any:
+    """Build an ActivationCheckpoint targeting the workload's transformer
+    block class(es).
+
+    The CLI cannot know which submodules to checkpoint — that is a property
+    of the model, declared by the Workload via ``block_types`` (e.g. the
+    GPT-2 ``Block``). Fail loudly here if a workload asks for activation
+    checkpointing without declaring any block types, so the misuse is obvious
+    at build time instead of as an opaque ValueError deep inside the service.
+    """
+    from sakura.services.activation_checkpoint import ActivationCheckpoint
+
+    if not workload.block_types:
+        raise ValueError(
+            f"workload {workload.name!r} does not declare any block_types; "
+            "activation_checkpoint needs at least one transformer block class "
+            "to wrap (set Workload.block_types in the workload factory)"
+        )
+    return ActivationCheckpoint(target_types=workload.block_types)
+
+
+def _make_kernel_opt(kwarg: Optional[str], workload: Workload) -> Any:
+    """Build a KernelOpt (cuDNN/TF32/channels_last backend knobs).
+
+    kwarg presets: None -> defaults (cudnn_benchmark + tf32 + flatten_rnn);
+    "channels_last"/"all" -> also enable channels_last; "no-benchmark" ->
+    leave cudnn.benchmark off.
+    """
+    from sakura.services.kernel_opt import KernelOpt
+
+    kw = (kwarg or "").lower()
+    return KernelOpt(
+        cudnn_benchmark="no-benchmark" not in kw,
+        channels_last=kw in ("channels_last", "all"),
+    )
+
+
+_SERVICE_FACTORIES: dict[str, Callable[[Optional[str], Workload], Any]] = {
     "telemetry": lambda kw, wl: __import__(
         "sakura.services.telemetry", fromlist=["Telemetry"]
     ).Telemetry(output=lambda _r: None),
+    "kernel_opt": _make_kernel_opt,
     "mixed_precision": lambda kw, wl: __import__(
         "sakura.services.mixed_precision", fromlist=["MixedPrecision"]
     ).MixedPrecision(dtype=kw or "auto"),
     "compile": lambda kw, wl: __import__(
         "sakura.services.compile", fromlist=["Compile"]
     ).Compile(mode=kw or "default"),
-    "activation_checkpoint": lambda kw, wl: __import__(
-        "sakura.services.activation_checkpoint", fromlist=["ActivationCheckpoint"]
-    ).ActivationCheckpoint(target_types=()),
+    "activation_checkpoint": _make_activation_checkpoint,
     "zero1": lambda kw, wl: __import__(
         "sakura.services.zero1", fromlist=["ZeRO1"]
     ).ZeRO1(),
@@ -199,7 +296,7 @@ _SERVICE_FACTORIES = {
 }
 
 
-def _build_services(specs: list[str], workload) -> list:
+def _build_services(specs: list[str], workload: Workload) -> list[Any]:
     """Parse `--service` specs into Service instances.
 
     Each spec is `name` or `name:kwarg` (one positional kwarg). Examples:
@@ -211,7 +308,7 @@ def _build_services(specs: list[str], workload) -> list:
     Workload is passed because some factories (notably async_eval) bridge
     workload.eval_fn to a service-specific signature.
     """
-    services = []
+    services: list[Any] = []
     for s in specs:
         name, _, kwarg = s.partition(":")
         factory = _SERVICE_FACTORIES.get(name)
@@ -223,15 +320,29 @@ def _build_services(specs: list[str], workload) -> list:
     return services
 
 
-def _cmd_run(args) -> int:
+def _cmd_run(args: argparse.Namespace) -> int:
     wl = _resolve_workload(args.workload)
+    if args.mode == "time-to-target":
+        # CLI target overrides the workload's configured metric_target.
+        if args.target_metric is not None and args.target_value is not None:
+            wl.metric_target = (args.target_metric, args.target_value)
+        if wl.metric_target is None:
+            raise ValueError(
+                "time-to-target mode requires a target: pass --target-metric and "
+                "--target-value, or choose a workload with metric_target set."
+            )
     if args.runner == "baseline":
-        runner = BaselineRunner(framework=args.framework)
+        runner = BaselineRunner(
+            framework=args.framework, mode=args.mode, max_epochs=args.max_epochs,
+        )
     elif args.runner == "sakura":
         # Build services from --service flags. Default to telemetry-only if none given.
         specs = list(args.service) if args.service else ["telemetry"]
         services = _build_services(specs, wl)
-        runner = SakuraRunner(framework=args.framework, services=services)
+        runner = SakuraRunner(
+            framework=args.framework, services=services,
+            mode=args.mode, max_epochs=args.max_epochs,
+        )
     else:
         raise ValueError(f"unknown runner {args.runner!r}")
 
@@ -246,12 +357,15 @@ def _cmd_run(args) -> int:
         f.write(report.to_json())
     print(f"wrote: {out_path}")
     print(f"elapsed: {report.elapsed_secs:.2f}s  samples/sec: {report.samples_per_sec:.1f}")
+    if report.reached_target is not None:
+        print(f"reached_target: {report.reached_target}  "
+              f"epochs_to_target: {report.epochs_to_target}")
     if report.final_metrics:
         print(f"final: {json.dumps(report.final_metrics)}")
     return 0
 
 
-def _cmd_compare(args) -> int:
+def _cmd_compare(args: argparse.Namespace) -> int:
     from sakura.bench.compare import load_reports, speedup_summary
 
     reports = load_reports(args.reports)
@@ -264,7 +378,7 @@ def _cmd_compare(args) -> int:
     return 0
 
 
-def _cmd_export(args) -> int:
+def _cmd_export(args: argparse.Namespace) -> int:
     from sakura.bench.compare import load_reports, render_markdown_table
 
     reports = load_reports(args.reports)
@@ -290,6 +404,17 @@ def main(argv: Optional[list[str]] = None) -> int:
                             f"{sorted(_SERVICE_FACTORIES)}. Examples: "
                             "--service mixed_precision:bf16 --service compile:reduce-overhead"
                         ))
+    p_run.add_argument("--mode", choices=["fixed", "time-to-target"], default="fixed",
+                        help=("Run mode. 'time-to-target' stops after the workload's "
+                              "metric_target is reached (pytorch-ddp framework only)."))
+    p_run.add_argument("--target-metric", default=None,
+                        help=("Metric name for time-to-target mode (e.g. val_loss, "
+                              "perplexity, val_acc). Overrides workload.metric_target."))
+    p_run.add_argument("--target-value", type=float, default=None,
+                        help="Target value paired with --target-metric.")
+    p_run.add_argument("--max-epochs", type=int, default=None,
+                        help=("Epoch cap for time-to-target mode (defaults to the "
+                              "workload's configured epochs)."))
     p_run.set_defaults(func=_cmd_run)
 
     p_cmp = sub.add_parser("compare", help="compare RunReport JSON files (pairs: baseline, sakura)")
@@ -301,7 +426,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_exp.set_defaults(func=_cmd_export)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    return cast(int, args.func(args))
 
 
 if __name__ == "__main__":
