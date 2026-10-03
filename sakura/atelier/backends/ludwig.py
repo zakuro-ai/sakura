@@ -428,7 +428,16 @@ def _reload_for_preprocessing(artifact: Artifact) -> Any:
     training produced rather than a hand-rolled re-implementation that could
     silently drift from it."""
     from ludwig.api import LudwigModel
-    return LudwigModel.load(str(_checkpoint_dir(artifact.path)), callbacks=[])
+
+    # Loaded once per process: `serve` answers every try-it from the same
+    # model instead of paying the ~10 s reload per request.
+    key = str(_checkpoint_dir(artifact.path))
+    if key not in _LOADED:
+        _LOADED[key] = LudwigModel.load(key, callbacks=[])
+    return _LOADED[key]
+
+
+_LOADED: dict[str, Any] = {}
 
 
 def runtime_eval(artifact: Artifact, data: MaterialisedData) -> RuntimeEval:

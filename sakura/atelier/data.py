@@ -276,6 +276,101 @@ def _materialise_labelled_folder(data: Data, spec: AtelierSpec, data_dir: Path, 
     return train_df, val_df, labels
 
 
+# ------------------------------------------------------------------ asr_manifest
+
+def _parse_split_expr(expr: str) -> tuple[str, str | None]:
+    """``"train"`` -> (train, None); ``"train@loz"`` -> (train, loz)."""
+    name, _, lang = expr.partition("@")
+    return name.strip(), (lang.strip() or None)
+
+
+def _materialise_asr_manifest(
+    data: Data, spec: AtelierSpec, data_dir: Path
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str], dict[str, Any], list[dict[str, Any]]]:
+    """Speech recognition from a ``manifest.csv`` of ``audio`` -> ``transcript`` rows.
+
+    ``data.uri`` is the manifest file, or the directory holding ``manifest.csv`` (the
+    dataset root: clip references are resolved against it). A row's ``audio`` is either a
+    path (absolute, or relative to the root) or ``<shard>#<member>`` with ``offset`` / ``size``
+    giving the clip's byte span inside an uncompressed tar shard (Zakuro hub packaging).
+
+    Optional columns: ``split`` (``train``/``dev``/``test``...), ``language``, ``duration_ms``,
+    ``sha256``. Split expressions pick rows by ``split`` and optionally ``language``:
+    ``train@loz`` = the ``loz`` rows of split ``train``. Without a ``split`` column use
+    ``validation_fraction``. Rows are returned sorted by duration so the bucketing loader
+    batches similar lengths together.
+
+    Nothing is copied: the dataset pin (CONTRACTS §1.2) lists the manifest and every selected
+    clip with its sha256 (the manifest's own column when present, else hashed from disk).
+    """
+    src = Path(_fetch_local(data.uri, data_dir / "_download"))
+    manifest = src / "manifest.csv" if src.is_dir() else src
+    root = src if src.is_dir() else src.parent
+    df = pd.read_csv(manifest)
+    audio_col = spec.features.inputs[0].name
+    text_col = spec.features.output.name
+    missing = [c for c in (audio_col, text_col) if c not in df.columns]
+    if missing:
+        raise ValueError(f"{manifest} is missing columns {missing} required by spec.features")
+    df = df.dropna(subset=[audio_col, text_col])
+    df[text_col] = df[text_col].astype(str).str.strip()
+    df = df[df[text_col] != ""]
+
+    def _select(expr: str) -> pd.DataFrame:
+        name, lang = _parse_split_expr(expr)
+        if "split" not in df.columns:
+            raise ValueError(f"split expression {expr!r} needs a 'split' column in {manifest}")
+        out = df[df["split"] == name]
+        if lang is not None:
+            if "language" not in df.columns:
+                raise ValueError(f"split expression {expr!r} needs a 'language' column in {manifest}")
+            out = out[out["language"] == lang]
+        if out.empty:
+            raise ValueError(f"split expression {expr!r} selects no rows of {manifest}")
+        return out
+
+    if data.split.validation_fraction is not None:
+        val_df = df.sample(frac=data.split.validation_fraction, random_state=spec.seed)
+        train_df = df.drop(val_df.index)
+    else:
+        assert data.split.train is not None and data.split.validation is not None
+        train_df, val_df = _select(data.split.train), _select(data.split.validation)
+
+    sort_key = "duration_ms" if "duration_ms" in df.columns else None
+    if sort_key:
+        train_df = train_df.sort_values(sort_key, kind="stable")
+        val_df = val_df.sort_values(sort_key, kind="stable")
+    train_df, val_df = train_df.reset_index(drop=True), val_df.reset_index(drop=True)
+
+    chars = sorted({c for t in pd.concat([train_df[text_col], val_df[text_col]]) for c in t})
+    if "_" in chars:
+        raise ValueError("transcripts must not contain '_' (reserved as the CTC blank)")
+    labels = ["_"] + chars  # blank first: CTC blank index 0
+
+    entries: list[dict[str, Any]] = [
+        {"path": manifest.name, "bytes": manifest.stat().st_size, "sha256": _sha256_file(manifest)}
+    ]
+    seen: set[str] = set()
+    for _, row in pd.concat([train_df, val_df]).iterrows():
+        ref = str(row[audio_col])
+        if ref in seen:
+            continue
+        seen.add(ref)
+        sha = str(row["sha256"]) if "sha256" in df.columns and isinstance(row.get("sha256"), str) else ""
+        size = int(row["size"]) if "size" in df.columns and pd.notna(row.get("size")) else 0
+        if not sha or not size:
+            shard_or_file = ref.split("#", 1)[0]
+            p = Path(shard_or_file)
+            p = p if p.is_absolute() else root / p
+            if "#" in ref:
+                raise ValueError(f"{ref}: shard references need 'offset', 'size' and 'sha256' columns")
+            sha, size = _sha256_file(p), p.stat().st_size
+        entries.append({"path": ref, "bytes": size, "sha256": sha})
+    extra = {"audio_root": str(root), "manifest": str(manifest),
+             "audio_col": audio_col, "text_col": text_col}
+    return train_df, val_df, labels, extra, entries
+
+
 # ------------------------------------------------------------------ public
 
 def materialise(spec: AtelierSpec, data_dir: Path) -> MaterialisedData:
@@ -294,6 +389,7 @@ def materialise(spec: AtelierSpec, data_dir: Path) -> MaterialisedData:
     train: Any
     validation: Any
     labels: list[str] | None
+    pinned_entries: list[dict[str, Any]] = []
 
     if fmt == "yolo":
         train, validation, labels, extra = _materialise_yolo(spec.data, spec, data_dir)
@@ -307,10 +403,15 @@ def materialise(spec: AtelierSpec, data_dir: Path) -> MaterialisedData:
         train, validation, labels = _materialise_labelled_folder(spec.data, spec, data_dir, IMAGE_EXTS)
     elif fmt == "audio_folder":
         train, validation, labels = _materialise_labelled_folder(spec.data, spec, data_dir, AUDIO_EXTS)
+    elif fmt == "asr_manifest":
+        train, validation, labels, extra, pinned_entries = _materialise_asr_manifest(
+            spec.data, spec, data_dir)
     else:
         raise ValueError(f"data.format {fmt!r} is not supported by sakura.atelier.data yet")
 
-    entries = _entries_for_tree(data_dir)
+    # asr_manifest datasets are not copied under data_dir (GBs of audio): their pin lists the
+    # manifest and every selected clip instead.
+    entries = pinned_entries if fmt == "asr_manifest" else _entries_for_tree(data_dir)
     manifest_sha256 = write_manifest(data_dir, entries)
     if spec.data.sha256 and spec.data.sha256 != manifest_sha256:
         raise ValueError(

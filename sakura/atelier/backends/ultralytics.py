@@ -296,7 +296,10 @@ class UltralyticsBackend:
         from PIL import Image
         from ultralytics import YOLO
 
-        onnx_model = YOLO(str(artifact.path), task="detect")
+        key = str(artifact.path)
+        if key not in _LOADED:  # once per process (`serve`)
+            _LOADED[key] = YOLO(key, task="detect")
+        onnx_model = _LOADED[key]
         source = inputs
         if isinstance(inputs, dict) and "file" in inputs:
             # CLI --file / the hub's multipart try-it (CONTRACTS §3.1).
@@ -319,5 +322,7 @@ class UltralyticsBackend:
             })
         return {"boxes": boxes, "width": int(w), "height": int(h)}
 
+
+_LOADED: dict[str, Any] = {}
 
 BACKEND = UltralyticsBackend()

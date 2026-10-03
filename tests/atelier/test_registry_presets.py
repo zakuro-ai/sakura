@@ -11,6 +11,7 @@ CANONICAL = {
     "tabular/ecd@1",
     "tabular/tabpfn@1",
     "text_generation/lora-fast@1",
+    "speech_recognition/ctc-fast@1",
 }
 
 PRESETS = Path(__file__).resolve().parents[2] / "sakura" / "atelier" / "registry" / "presets"
@@ -36,6 +37,7 @@ CANONICAL_EXPORTS = {
     "tabpfn_v2": [],
     "yolo11n": ["onnx"],
     "lfm2-350m": ["gguf", "safetensors", "mlx"],
+    "deepspeech2": ["safetensors"],
 }
 
 

@@ -26,11 +26,14 @@ Task = Literal[
     "tabular_regression",
     "audio_classification",
     "text_generation",
+    "speech_recognition",
 ]
 Format = Literal["onnx", "gguf", "mlx", "torchscript", "safetensors"]
 InputType = Literal["image", "category", "number", "binary", "text", "audio"]
 OutputType = Literal["category", "binary", "number", "boxes", "text"]
-DataFormat = Literal["hf", "image_folder", "yolo", "csv", "parquet", "audio_folder", "jsonl"]
+DataFormat = Literal[
+    "hf", "image_folder", "yolo", "csv", "parquet", "audio_folder", "jsonl", "asr_manifest"
+]
 Strategy = Literal["best_price", "best_availability", "best_latency"]
 
 #: ``<task>/<name>@<version>``. The version is what makes a preset immutable:

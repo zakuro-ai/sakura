@@ -16,6 +16,7 @@ TASK_BACKENDS: dict[str, str] = {
     "tabular_regression": "ludwig",
     "object_detection": "ultralytics",
     "text_generation": "peft",
+    "speech_recognition": "deepspeech",
 }
 
 #: Models served by a backend other than their task's default.
