@@ -125,3 +125,6 @@ manifest-path = "crates/sakura-wire/Cargo.toml"
 module-name = "sakura_wire"
 features = ["pyo3/extension-module"]
 python-packages = ["sakura"]
+# manifest-path points into crates/, so the sdist would otherwise miss the
+# repo-root LICENSE that the metadata declares (PyPI rejects that: 400).
+include = [{ path = "LICENSE", format = "sdist" }]
