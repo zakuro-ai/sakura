@@ -124,6 +124,12 @@ jobs:
         with:
           command: sdist
           args: --out dist
+      - name: The sdist ships the LICENSE its metadata declares
+        # PyPI rejects an sdist whose License-File is missing from the
+        # tarball (400). Catch that here, on PRs too, instead of at upload.
+        run: |
+          tar tzf dist/*.tar.gz | grep -qE '^[^/]+/LICENSE$' \
+            || { echo "::error::LICENSE is missing from the sdist"; tar tzf dist/*.tar.gz; exit 1; }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: sdist
