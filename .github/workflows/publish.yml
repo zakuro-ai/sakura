@@ -32,6 +32,7 @@ on:
 
 permissions:
   contents: read
+  actions: write  # a failed wheel/sdist build cancels the rest of the run
 
 concurrency:
   group: publish-${{ github.event.inputs.tag || github.ref }}
@@ -109,6 +110,10 @@ jobs:
         with:
           name: wheel-${{ matrix.target }}
           path: dist/*.whl
+      # Last step on purpose, after this job's own uploads: see the action.
+      - name: Cancel the rest of the run
+        if: failure()
+        uses: ./.github/actions/cancel-run-on-failure
 
   sdist:
     name: sdist
@@ -134,6 +139,10 @@ jobs:
         with:
           name: sdist
           path: dist/*.tar.gz
+      # Last step on purpose, after this job's own uploads: see the action.
+      - name: Cancel the rest of the run
+        if: failure()
+        uses: ./.github/actions/cancel-run-on-failure
 
   smoke:
     name: Install smoke test

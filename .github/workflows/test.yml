@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: write  # a failed job cancels the rest of the run (cancel-run-on-failure)
 
 concurrency:
   group: test-${{ github.ref }}
@@ -38,6 +39,10 @@ jobs:
           rustc --version | grep -q '1\.88\.' || { rustc --version; exit 1; }
       - name: cargo check (MSRV)
         run: cargo check --workspace
+      # Last step on purpose, after this job's own uploads: see the action.
+      - name: Cancel the rest of the run
+        if: failure()
+        uses: ./.github/actions/cancel-run-on-failure
 
   rust:
     name: Rust
@@ -56,6 +61,10 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: cargo test
         run: cargo test --workspace --all-features
+      # Last step on purpose, after this job's own uploads: see the action.
+      - name: Cancel the rest of the run
+        if: failure()
+        uses: ./.github/actions/cancel-run-on-failure
 
   python-fast:
     name: Python fast (no Rust build)
@@ -82,6 +91,10 @@ jobs:
       - name: Pytest (skip wire tests)
         # subset coverage is not meaningful; the 70% gate lives in the full jobs
         run: PYTHONPATH=. .venv/bin/pytest tests/ -m 'not wire and not timing' -v --cov-fail-under=0
+      # Last step on purpose, after this job's own uploads: see the action.
+      - name: Cancel the rest of the run
+        if: failure()
+        uses: ./.github/actions/cancel-run-on-failure
 
   python:
     name: Python ${{ matrix.python }}
@@ -118,3 +131,7 @@ jobs:
         with:
           files: coverage.xml
           fail_ci_if_error: false
+      # Last step on purpose, after this job's own uploads: see the action.
+      - name: Cancel the rest of the run
+        if: failure()
+        uses: ./.github/actions/cancel-run-on-failure
