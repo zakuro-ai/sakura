@@ -12,3 +12,9 @@ safetensors>=0.4
 soundfile
 librosa
 pandas
+
+# notebook bundle (CONTRACTS §2.5): the run writes and re-executes its own notebook here
+nbformat>=5.10
+nbclient>=0.10
+ipykernel>=6.29
+matplotlib>=3.8

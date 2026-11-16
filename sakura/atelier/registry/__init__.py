@@ -19,7 +19,9 @@ from typing import Any
 import yaml
 
 from sakura.atelier.backends import backend_name
-from sakura.atelier.spec import AtelierSpec, dump_spec
+from sakura.atelier.decision import check_base_model
+from sakura.atelier.hf_ref import parse_hf_model
+from sakura.atelier.spec import AtelierSpec, dump_spec, split_strategy
 from sakura.atelier.types import ResolvedSpec
 
 REGISTRY_DIR = Path(__file__).parent
@@ -28,8 +30,9 @@ MODELS_PATH = REGISTRY_DIR / "models.yaml"
 
 
 def load_models() -> dict[str, Any]:
+    from sakura.atelier.registry.routes import check_models
     with open(MODELS_PATH, encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
+        return check_models(yaml.safe_load(fh) or {})
 
 
 def preset_path(hp: str) -> Path:
@@ -73,6 +76,16 @@ def resolve(spec: AtelierSpec) -> ResolvedSpec:
     check ``spec.model`` against the registry. Raises ``ValueError`` listing
     what is wrong; never silently drops an unknown model or task mismatch."""
     models = load_models()
+    hf = parse_hf_model(spec.model)
+    if hf is not None:
+        from sakura.atelier.registry.routes import HF_TASK_TEMPLATES, routes
+        template = HF_TASK_TEMPLATES.get(spec.task)
+        if template is None or spec.task not in routes()["hf_tasks"]:
+            raise ValueError(f"no Hugging Face backend for task {spec.task!r} "
+                             f"(hf: models train {sorted(HF_TASK_TEMPLATES)})")
+        models = {**models, spec.model: {**models[template], "hp_required": [],
+                                         "hp_defaults": {**(models[template].get("hp_defaults") or {}),
+                                                         "base_model": hf.repo, "base_revision": hf.revision}}}
     if spec.model not in models:
         raise ValueError(f"unknown model {spec.model!r} (not in registry/models.yaml)")
     tasks = models[spec.model].get("tasks", [])
@@ -86,7 +99,7 @@ def resolve(spec: AtelierSpec) -> ResolvedSpec:
         raise ValueError(
             f"model {spec.model!r} cannot export {bad} (it exports {exports or 'nothing: evaluation-only'})"
         )
-    if not spec.export and exports:
+    if not spec.export and exports and not models[spec.model].get("export_optional", False):
         raise ValueError(f"export is empty; model {spec.model!r} exports {exports}")
 
     if spec.hyperparameters is not None:
@@ -96,19 +109,46 @@ def resolve(spec: AtelierSpec) -> ResolvedSpec:
         # preset were ever edited in place.
         hyperparameters = dict(spec.hyperparameters)
     else:
-        hyperparameters = load_preset(spec.hp)
+        # Model-level defaults sit UNDER the preset (CONTRACTS §2.2): e.g. the
+        # base checkpoint a peft model id stands for, so resolved.yaml records
+        # the weights a run used even when nothing in the spec named them.
+        hyperparameters = dict(models[spec.model].get("hp_defaults") or {})
+        hyperparameters.update(load_preset(spec.hp))
         hyperparameters.update(spec.overrides)  # shallow per-key override (CONTRACTS §1)
+        if hf is not None:  # the pinned ref IS the base: an override cannot move it
+            hyperparameters.update(base_model=hf.repo, base_revision=hf.revision)
+    missing = [k for k in models[spec.model].get("hp_required", [])
+               if hyperparameters.get(k) in (None, "")]
+    if missing:
+        raise ValueError(
+            f"model {spec.model!r} requires hyperparameters {missing}: set them in "
+            f"`overrides` (e.g. overrides: {{{missing[0]}: ...}})"
+        )
+
+    if spec.task == "decision":
+        # The allowlist comes from the preset FILE, never from `overrides` or a replayed
+        # hyperparameters block: a spec must not be able to widen what the licence review covered.
+        hyperparameters = check_base_model(hyperparameters, load_preset(spec.hp).get("base_model_allowlist", {}))
 
     backend = backend_name(spec.task, spec.model)
+    # Recipe options shared by backends (init, ...): refused here, so `validate` says no before a run does.
+    from sakura.atelier.recipe import check_recipe
+    check_recipe(spec.task, hyperparameters, backend)
     return ResolvedSpec(spec=spec, hyperparameters=hyperparameters, backend=backend)
 
 
 def resolved_yaml_text(resolved: ResolvedSpec, data_sha256: str) -> str:
     """``resolved.yaml``: the spec with its preset expanded into an explicit
-    ``hyperparameters`` block, ``hp`` kept for provenance, and ``data.sha256``
-    filled in when the input spec left it empty (CONTRACTS §1.1, §1.2)."""
+    ``hyperparameters`` block, ``hp`` kept for provenance, ``data.sha256``
+    filled in when the input spec left it empty (CONTRACTS §1.1, §1.2), and
+    the holdout's ``data.split.strategy`` written out when the spec left it
+    to the default, so a replay draws the same rows whatever the default
+    later becomes."""
     data = resolved.spec.model_dump(mode="json")
     data["hyperparameters"] = resolved.hyperparameters
+    strategy = split_strategy(resolved.spec)
+    if strategy is not None:
+        data["data"]["split"]["strategy"] = strategy
     if not data["data"]["sha256"]:
         data["data"]["sha256"] = data_sha256
     elif data["data"]["sha256"] != data_sha256:

@@ -32,8 +32,14 @@ def _make_loaders(batch_size: int = 64, n_train: int = 1024, n_val: int = 256) -
         cache_dir = os.path.join(tempfile.gettempdir(), "sakura-mnist-cache")
         os.makedirs(cache_dir, exist_ok=True)
         transform = transforms.Compose([transforms.ToTensor()])
-        train = datasets.MNIST(cache_dir, train=True, download=True, transform=transform)
-        val = datasets.MNIST(cache_dir, train=False, download=True, transform=transform)
+        # Same switch as the CIFAR-10 workload: SAKURA_DATASET_BUDGET_S<=0
+        # means "do not download". A copy already in the cache is still used;
+        # otherwise torchvision raises and we fall back to synthetic data. CI
+        # sets it to 0: the MNIST mirrors cost the bench smoke ~80 s there for
+        # a dataset the smoke never needs (#161).
+        download = float(os.environ.get("SAKURA_DATASET_BUDGET_S", "180")) > 0
+        train = datasets.MNIST(cache_dir, train=True, download=download, transform=transform)
+        val = datasets.MNIST(cache_dir, train=False, download=download, transform=transform)
         # Subsample for speed (smoke = fast).
         train = torch.utils.data.Subset(train, list(range(min(n_train, len(train)))))
         val = torch.utils.data.Subset(val, list(range(min(n_val, len(val)))))

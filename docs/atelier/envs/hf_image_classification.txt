@@ -1,0 +1,23 @@
+# sakura/atelier/backends/hf_image_classification.py -- exact pins, verified by
+# tests/atelier/test_hf_classification.py (CPU wheels, python 3.11). The family
+# image's build-envs.sh picks the torch wheel index for its FLAVOUR.
+#
+# Licence: whatever the chosen repo declares -- every release ships it
+# (sakura/atelier/licence.py). transformers/torch/onnxruntime are Apache-2.0/BSD.
+# Repos that need remote code (config.auto_map) are refused, never executed.
+
+torch>=2.5.1  # floor, not exact: the cu121 wheel index ends at 2.5.1; tested on 2.15.0+cpu
+transformers==5.18.0
+safetensors==0.8.0
+onnx==1.23.1
+onnxruntime==1.30.0
+numpy>=1.26
+pandas>=2.0
+pyyaml>=6.0
+pillow==13.0.0
+
+# notebook bundle (CONTRACTS §2.5)
+nbformat>=5.10
+nbclient>=0.10
+ipykernel>=6.29
+matplotlib>=3.8

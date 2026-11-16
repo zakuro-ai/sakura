@@ -1,0 +1,35 @@
+# sakura/atelier/backends/whisper.py -- speech_recognition / whisper-small, whisper-large-v3-turbo.
+#
+# Same stack as the peft backend (docs/atelier/envs/peft.txt) plus soundfile for clip decoding:
+#
+# uv venv .venv --python 3.11
+# uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cu121
+# uv pip install --python .venv/bin/python -r docs/atelier/envs/whisper.txt
+#
+# Weights are downloaded from the Hugging Face hub on first use (openai/whisper-small, ~1 GB). Whisper pads every
+# clip to 30 s, so memory scales with batch_size, not clip length: batch 8 + fp16 fits ~7 GB for whisper-small;
+# whisper-large-v3-turbo needs gradient_checkpointing: true (and a smaller batch) on 12 GB cards.
+#
+# `export: [ggml]` (CONTRACTS §2.2) needs whisper.cpp, which is not a pip package: the runner image builds it
+# into this venv's host and exports two variables the backend reads (nothing to install from this file):
+#
+#   git clone https://github.com/ggml-org/whisper.cpp $SAKURA_WHISPER_CPP_DIR
+#   cmake -S $SAKURA_WHISPER_CPP_DIR -B $SAKURA_WHISPER_CPP_DIR/build -DGGML_CUDA=ON   # whisper-quantize + whisper-cli
+#   cmake --build $SAKURA_WHISPER_CPP_DIR/build --config Release
+#   git clone https://github.com/openai/whisper $SAKURA_OPENAI_WHISPER_DIR                # mel_filters.npz for the converter
+#
+# models/convert-h5-to-ggml.py runs under this venv's python (it imports torch + numpy, both already here).
+
+transformers>=4.57
+peft>=0.13
+accelerate
+safetensors
+soundfile
+sentencepiece
+protobuf
+
+# notebook bundle (CONTRACTS §2.5): the run writes and re-executes its own notebook here
+nbformat>=5.10
+nbclient>=0.10
+ipykernel>=6.29
+matplotlib>=3.8

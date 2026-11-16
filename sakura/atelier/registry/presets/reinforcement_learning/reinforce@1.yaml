@@ -1,0 +1,22 @@
+# reinforcement_learning/reinforce@1 -- immutable once released (CONTRACTS §1.1).
+#
+# Path walking on a knowledge graph (backends/rl.py): REINFORCE with a moving-average baseline and an
+# entropy bonus, on a CPU, from random weights. `steps` is the number of policy-gradient updates, each on
+# `batch_size` episodes of at most `max_hops` hops. `beam_width` and `hits_k` set the final ranking
+# (hits_at_<k>, mrr); `random_rollouts` is the number of random walks per validation query the baseline
+# is averaged over. An entity keeps at most `max_out_degree` outgoing edges.
+hyperparameters:
+  max_hops: 3
+  embedding_dim: 32
+  hidden_dim: 64
+  steps: 1500
+  batch_size: 128
+  learning_rate: 0.003
+  entropy_weight: 0.02
+  baseline_decay: 0.9
+  grad_clip: 5.0
+  beam_width: 8
+  hits_k: 3
+  log_every: 25
+  random_rollouts: 20
+  max_out_degree: 200

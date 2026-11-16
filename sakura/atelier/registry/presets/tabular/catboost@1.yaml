@@ -1,0 +1,6 @@
+# tabular/catboost@1 -- immutable once released (CONTRACTS §1.1).
+# classic_ml defaults for small-to-medium tables; overrides.params passes any other estimator argument.
+hyperparameters:
+  n_estimators: 500
+  learning_rate: 0.05
+  max_depth: 6

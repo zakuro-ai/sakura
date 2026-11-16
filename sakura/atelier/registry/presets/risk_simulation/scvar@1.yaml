@@ -1,0 +1,24 @@
+# risk_simulation/scvar@1 -- immutable once released (CONTRACTS §1.1).
+#
+# Supply-chain Value-at-Risk on a one-year horizon from monthly factor returns. Four estimates side by side
+# at 95 / 97.5 / 99 %. The Monte Carlo runs a convergence ladder (10k, 100k, 1M draws; the last is the
+# headline) so the report shows how far the smaller samples sit from it.
+#
+# The defence layers are illustrative starting values (hedging, inventory buffer, alternative logistics,
+# reformulation / price pass-through): set your own through `overrides.defence`. `calibrate_gross_q99` is
+# off: the simulated gross loss is whatever the inputs imply.
+hyperparameters:
+  alphas: [0.95, 0.975, 0.99]
+  iterations: [10000, 100000, 1000000]
+  copula_nu: 4
+  jump_rate: 0.2
+  jump_scale: 0.25
+  periods_per_horizon: 12
+  evt_threshold: 0.9
+  se_batches: 20
+  calibrate_gross_q99: null
+  defence:
+    - {name: hedging, share: 0.25, cap: 9.0}
+    - {name: inventory_buffer, share: 0.2, cap: 5.0}
+    - {name: logistics, share: 0.15, cap: 3.5}
+    - {name: reformulation_pass_through, share: 0.3, cap: 8.0}

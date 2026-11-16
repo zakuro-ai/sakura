@@ -20,8 +20,8 @@ use crate::protocol::{WireError, HANDLER_ECHO};
 use crate::runtime::WireRuntime;
 use crate::supervisor::encode_hex;
 use crate::transport::{
-    accept_request, bind_server, connect, generate_self_signed, rpc_call, send_response,
-    TransportError,
+    accept_request, bind_server_with, connect_with, generate_self_signed, rpc_call, send_response,
+    FlowControlConfig, TransportError,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -156,24 +156,138 @@ impl PyFuture {
     }
 }
 
+/// QUIC flow-control windows (SAK-0010). `FlowControl()` keeps quinn's
+/// defaults; `FlowControl(rtt_ms=248, bandwidth_bytes_per_s=12_500_000)`
+/// sizes the windows from the bandwidth-delay product, clamped to
+/// `[min_window, max_window]` bytes.
+#[pyclass(name = "FlowControl", from_py_object)]
+#[derive(Clone)]
+pub struct PyFlowControl {
+    inner: FlowControlConfig,
+}
+
+#[pymethods]
+impl PyFlowControl {
+    #[new]
+    #[pyo3(signature = (rtt_ms = None, bandwidth_bytes_per_s = None, min_window = None, max_window = None))]
+    fn new(
+        rtt_ms: Option<f64>,
+        bandwidth_bytes_per_s: Option<u64>,
+        min_window: Option<u64>,
+        max_window: Option<u64>,
+    ) -> PyResult<Self> {
+        let base = match (rtt_ms, bandwidth_bytes_per_s) {
+            (None, None) => FlowControlConfig::default(),
+            (Some(rtt), Some(bw)) => {
+                if !rtt.is_finite() || rtt <= 0.0 {
+                    return Err(PyValueError::new_err(format!(
+                        "rtt_ms must be a positive finite number, got {rtt}"
+                    )));
+                }
+                if bw == 0 {
+                    return Err(PyValueError::new_err("bandwidth_bytes_per_s must be > 0"));
+                }
+                FlowControlConfig::from_rtt_bandwidth(Duration::from_secs_f64(rtt / 1000.0), bw)
+            }
+            _ => {
+                return Err(PyValueError::new_err(
+                    "rtt_ms and bandwidth_bytes_per_s must be given together",
+                ))
+            }
+        };
+        let min = min_window.unwrap_or(base.min_window);
+        let max = max_window.unwrap_or(base.max_window);
+        let inner = base
+            .with_clamps(min, max)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// The windows applied, as a dict of byte counts
+    /// (`stream_receive_window`, `receive_window`, `send_window`), or
+    /// `None` when quinn's defaults are kept.
+    fn windows<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(w) = self.inner.windows() else {
+            return Ok(None);
+        };
+        let d = PyDict::new(py);
+        d.set_item("stream_receive_window", w.stream_receive_window)?;
+        d.set_item("receive_window", w.receive_window)?;
+        d.set_item("send_window", w.send_window)?;
+        Ok(Some(d))
+    }
+
+    /// Link round-trip time in ms, or `None` when quinn's defaults are kept.
+    #[getter]
+    fn rtt_ms(&self) -> Option<f64> {
+        self.inner.link.map(|l| l.rtt.as_secs_f64() * 1000.0)
+    }
+
+    /// Link bottleneck bandwidth in bytes/s, or `None` when quinn's
+    /// defaults are kept.
+    #[getter]
+    fn bandwidth_bytes_per_s(&self) -> Option<u64> {
+        self.inner.link.map(|l| l.bandwidth_bytes_per_s)
+    }
+
+    /// Lower clamp on the per-stream receive window, in bytes.
+    #[getter]
+    fn min_window(&self) -> u64 {
+        self.inner.min_window
+    }
+
+    /// Upper clamp on the per-stream receive window, in bytes.
+    #[getter]
+    fn max_window(&self) -> u64 {
+        self.inner.max_window
+    }
+
+    fn __repr__(&self) -> String {
+        match self.inner.link {
+            None => "FlowControl(quinn defaults)".to_string(),
+            Some(l) => format!(
+                "FlowControl(rtt_ms={}, bandwidth_bytes_per_s={}, min_window={}, max_window={})",
+                l.rtt.as_secs_f64() * 1000.0,
+                l.bandwidth_bytes_per_s,
+                self.inner.min_window,
+                self.inner.max_window
+            ),
+        }
+    }
+}
+
+fn flow_or_default(flow_control: Option<PyFlowControl>) -> FlowControlConfig {
+    flow_control.map(|f| f.inner).unwrap_or_default()
+}
+
 #[pyclass(name = "Dispatcher")]
 pub struct PyDispatcher {
     target_uri: String,
     tls: PyTlsConfig,
+    flow: FlowControlConfig,
 }
 
 #[pymethods]
 impl PyDispatcher {
     /// Construct a dispatcher pointing at `quic://host:port`.
+    /// `flow_control` (optional `FlowControl`) sets the client's QUIC windows.
     #[new]
-    #[pyo3(signature = (target_uri, tls))]
-    fn new(target_uri: String, tls: PyTlsConfig) -> PyResult<Self> {
+    #[pyo3(signature = (target_uri, tls, flow_control = None))]
+    fn new(
+        target_uri: String,
+        tls: PyTlsConfig,
+        flow_control: Option<PyFlowControl>,
+    ) -> PyResult<Self> {
         if !target_uri.starts_with("quic://") {
             return Err(PyErr::from(PyWireError::UriParse(format!(
                 "only quic:// is supported in v1, got: {target_uri}"
             ))));
         }
-        Ok(Self { target_uri, tls })
+        Ok(Self {
+            target_uri,
+            tls,
+            flow: flow_or_default(flow_control),
+        })
     }
 
     /// Submit an RPC.
@@ -191,6 +305,7 @@ impl PyDispatcher {
         let target = parse_quic_uri(&self.target_uri)?;
         let cert = self.tls.cert_der.clone();
         let server_name = self.tls.server_name.clone();
+        let flow = self.flow;
 
         let header = RpcRequestHeader {
             version: WireVersion::V1,
@@ -215,7 +330,7 @@ impl PyDispatcher {
         let sf_clone = Arc::clone(&sender_finished);
 
         WireRuntime::shared().spawn(async move {
-            let result = run_rpc(&target, &server_name, &cert, request_bytes).await;
+            let result = run_rpc(&target, &server_name, &cert, &flow, request_bytes).await;
             sf_clone.store(true, Ordering::Release);
             if !cancelled_clone.load(Ordering::Acquire) {
                 let _ = tx.send(result);
@@ -322,9 +437,10 @@ async fn run_rpc(
     target: &SocketAddr,
     server_name: &str,
     trusted_cert: &[u8],
+    flow: &FlowControlConfig,
     request_bytes: Vec<u8>,
 ) -> Result<PyRpcResult, PyWireError> {
-    let conn = connect(*target, server_name, trusted_cert).await?;
+    let conn = connect_with(*target, server_name, trusted_cert, flow).await?;
     let resp = rpc_call(&conn, request_bytes).await?;
     parse_response(&resp)
 }
@@ -465,8 +581,14 @@ impl PyWorkerSupervisor {
 /// Bind a QUIC server, print one handshake line on stdout, then serve the
 /// echo handler forever (`HANDLER_ECHO`). Used by the `sakura-worker` daemon.
 #[pyfunction]
-#[pyo3(signature = (addr, print_handshake = true))]
-pub fn run_echo_server(py: Python<'_>, addr: String, print_handshake: bool) -> PyResult<()> {
+#[pyo3(signature = (addr, print_handshake = true, flow_control = None))]
+pub fn run_echo_server(
+    py: Python<'_>,
+    addr: String,
+    print_handshake: bool,
+    flow_control: Option<PyFlowControl>,
+) -> PyResult<()> {
+    let flow = flow_or_default(flow_control);
     py.detach(|| -> PyResult<()> {
         WireRuntime::shared().block_on(async move {
             let pair = generate_self_signed("localhost")
@@ -474,7 +596,7 @@ pub fn run_echo_server(py: Python<'_>, addr: String, print_handshake: bool) -> P
             let bind_addr: SocketAddr = addr
                 .parse()
                 .map_err(|e| PyRuntimeError::new_err(format!("addr {addr}: {e}")))?;
-            let endpoint = bind_server(bind_addr, &pair)
+            let endpoint = bind_server_with(bind_addr, &pair, &flow)
                 .map_err(|e| PyRuntimeError::new_err(format!("bind: {e}")))?;
             let local = endpoint
                 .local_addr()
@@ -533,13 +655,15 @@ pub fn run_echo_server(py: Python<'_>, addr: String, print_handshake: bool) -> P
 /// Plan 2's HandlerRegistry on the Python side is the canonical implementation;
 /// run_server is the thin Rust shim.
 #[pyfunction]
-#[pyo3(signature = (addr, callback, print_handshake = true))]
+#[pyo3(signature = (addr, callback, print_handshake = true, flow_control = None))]
 pub fn run_server(
     py: Python<'_>,
     addr: String,
     callback: Py<PyAny>,
     print_handshake: bool,
+    flow_control: Option<PyFlowControl>,
 ) -> PyResult<()> {
+    let flow = flow_or_default(flow_control);
     let cb = std::sync::Arc::new(callback);
     py.detach(|| -> PyResult<()> {
         WireRuntime::shared().block_on(async move {
@@ -548,7 +672,7 @@ pub fn run_server(
             let bind_addr: SocketAddr = addr
                 .parse()
                 .map_err(|e| PyRuntimeError::new_err(format!("addr {addr}: {e}")))?;
-            let endpoint = bind_server(bind_addr, &pair)
+            let endpoint = bind_server_with(bind_addr, &pair, &flow)
                 .map_err(|e| PyRuntimeError::new_err(format!("bind: {e}")))?;
             let local = endpoint
                 .local_addr()

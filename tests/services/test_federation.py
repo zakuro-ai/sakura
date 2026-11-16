@@ -55,7 +55,7 @@ class TinyNet(torch.nn.Module):
         return self.net(x)
 
 
-def _worker_thread(wid, port, stop_evt, out, codec="int8", die_after=None):
+def _worker_thread(wid, port, stop_evt, out, codec="int8", die_after=None, fed_kw=None):
     from sakura.runtime import SakuraRuntime
     from sakura.adapters.ddp import DDPAdapter
 
@@ -67,7 +67,7 @@ def _worker_thread(wid, port, stop_evt, out, codec="int8", die_after=None):
     x = torch.randn(16, 32, generator=g)
     y = torch.randint(0, 8, (16,), generator=g)
     rt = SakuraRuntime()
-    fed = FederationService("127.0.0.1", port, wid, 16, codec=codec)
+    fed = FederationService("127.0.0.1", port, wid, 16, codec=codec, **(fed_kw or {}))
     rt.install(fed)
     adapter = DDPAdapter(rt, rank=0, world_size=3)
     t_die = time.monotonic() + die_after if die_after else None
@@ -110,13 +110,27 @@ def _worker_thread(wid, port, stop_evt, out, codec="int8", die_after=None):
         out[wid] = {"error": repr(e)}
 
 
-def _run_e2e(codec="int8", n_rounds=3, die_one=False, shards=1):
-    port = (
-        29710
-        + (7 if die_one else 0)
-        + (100 if codec == "fp32raw" else 0)
-        + (200 if shards > 1 else 0)
-    )
+def _start_leader(leader, warmup_s=1.0, timeout=10.0) -> int:
+    """Start ``leader.serve_forever`` in a daemon thread and return its port.
+
+    Construct the Leader with ``port=0``: the kernel picks a free port at
+    bind time and we read it back from the listening socket, so there is no
+    bind-close-reuse race between parallel suites on one host.
+    """
+    threading.Thread(
+        target=leader.serve_forever, kwargs={"warmup_s": warmup_s}, daemon=True
+    ).start()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        srv = getattr(leader, "_srv", None)
+        if srv is not None:
+            return srv.getsockname()[1]
+        time.sleep(0.01)
+    raise RuntimeError("leader did not start listening")
+
+
+def _run_e2e(codec="int8", n_rounds=3, die_one=False, shards=1, fed_kw=None,
+             leader_kw=None, port=0):
     leader = Leader(
         model_fn=TinyNet,
         port=port,
@@ -126,11 +140,9 @@ def _run_e2e(codec="int8", n_rounds=3, die_one=False, shards=1):
         seed=42,
         max_rounds=n_rounds,
         shards=shards,
+        **(leader_kw or {}),
     )
-    lt = threading.Thread(
-        target=leader.serve_forever, kwargs={"warmup_s": 1.0}, daemon=True
-    )
-    lt.start()
+    port = _start_leader(leader, warmup_s=1.0)
     stop = threading.Event()
     out: dict = {}
     ths = []
@@ -139,7 +151,7 @@ def _run_e2e(codec="int8", n_rounds=3, die_one=False, shards=1):
         t = threading.Thread(
             target=_worker_thread,
             args=(wid, port, stop, out),
-            kwargs={"codec": codec, **kw},
+            kwargs={"codec": codec, "fed_kw": fed_kw, **kw},
             daemon=True,
         )
         t.start()
@@ -358,3 +370,101 @@ class TestE2EInt8:
         hashes = {w: anchor_hash16(out[w]["anchor"], out[w]["bn"]).hex() for w in alive}
         lh = anchor_hash16(leader.anchor, leader.bn).hex()
         assert sum(h == lh for h in hashes.values()) >= 2
+
+
+class TestE2EDelayedNesterov:
+    """#90: the flat leader runs the buffered (Delayed) Nesterov outer step
+    and keeps bit-identical consensus with its workers."""
+
+    def test_rejects_bad_delay(self):
+        with pytest.raises(ValueError):
+            Leader(model_fn=TinyNet, port=0, expected=["a"],
+                   outer_opt="delayed_nesterov", outer_delay=0)
+
+    def test_rounds_complete_with_consensus(self):
+        leader, out = _run_e2e(
+            codec="int8", n_rounds=4,
+            leader_kw={"outer_opt": "delayed_nesterov", "outer_lr": 0.7,
+                       "outer_delay": 2},
+        )
+        assert leader.round >= 4
+        assert all(r["consensus_ok"] for r in leader.stats)
+        assert leader.outer_buf is not None and leader.outer_steps[0] >= 4
+        assert torch.count_nonzero(leader.outer_m) > 0  # momentum refreshed
+        alive = [w for w in ("a", "b", "c") if "error" not in out.get(w, {})]
+        assert len(alive) == 3
+        hashes = {w: anchor_hash16(out[w]["anchor"], out[w]["bn"]).hex() for w in alive}
+        lh = anchor_hash16(leader.anchor, leader.bn).hex()
+        assert sum(h == lh for h in hashes.values()) >= 2
+
+
+class TestStreamingDiLoCo:
+    """Issue #51: int4 on the streamed shard + bounded overlap staleness."""
+
+    def test_int4_streaming_bounded_staleness(self):
+        leader, out = _run_e2e(
+            codec="int4", n_rounds=4, shards=3, fed_kw={"max_stale_steps": 3}
+        )
+        assert leader.round >= 4
+        assert all(r["consensus_ok"] for r in leader.stats)
+        alive = [w for w in ("a", "b", "c") if "error" not in out.get(w, {})]
+        assert len(alive) == 3
+        hashes = {w: anchor_hash16(out[w]["anchor"], out[w]["bn"]).hex() for w in alive}
+        lh = anchor_hash16(leader.anchor, leader.bn).hex()
+        assert sum(h == lh for h in hashes.values()) >= 2
+        for w in alive:
+            fed = out[w]["fed"]
+            # worker-side error feedback is carried for int4, like int8
+            assert fed.ef is not None and float(fed.ef.abs().sum()) > 0
+            shards = {tuple(r["shard"]) for r in fed.records if "shard" in r}
+            assert len(shards) >= 2  # round-robin over the shard slices
+
+    def _svc(self, bound):
+        return FederationService("127.0.0.1", 1, "w", 1, max_stale_steps=bound)
+
+    def test_stale_bound_blocks_until_round_commits(self):
+        svc = self._svc(2)
+        svc._round_active.set()
+        svc._snap_done.set()  # snapshot taken; round in flight
+        svc.on_optimizer_step(None)
+        svc.on_train_step_begin(None)  # 1 step since snapshot: no wait
+        svc.on_optimizer_step(None)
+        t = threading.Thread(target=svc.on_train_step_begin, args=(None,))
+        t.start()
+        t.join(0.3)
+        assert t.is_alive()  # 2 steps since snapshot: bound reached
+        svc._round_active.clear()  # round commits (apply done)
+        t.join(2.0)
+        assert not t.is_alive()
+
+    def test_stale_bound_resets_at_snapshot(self):
+        svc = self._svc(1)
+        svc._steps_since_snap = 5
+        svc._round_active.set()
+        svc._snap_done.set()
+
+        class _FS:
+            bn_numel = 0
+
+            def snapshot_params_to(self, _):
+                pass
+
+            def bn_vec(self):
+                return torch.empty(0)
+
+        svc.fs = _FS()
+        svc.snap = torch.empty(0)
+        svc._bn_snap = torch.empty(0)
+        svc._snap_req.set()  # next round's snapshot is pending
+        svc.on_train_step_begin(None)  # services the snapshot, resets, returns
+        assert svc._steps_since_snap == 0
+
+    def test_unbounded_overlap_never_waits(self):
+        svc = self._svc(None)
+        svc._round_active.set()
+        svc._snap_done.set()
+        for _ in range(50):
+            svc.on_optimizer_step(None)
+        t0 = time.monotonic()
+        svc.on_train_step_begin(None)
+        assert time.monotonic() - t0 < 0.1

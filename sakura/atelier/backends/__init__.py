@@ -5,35 +5,56 @@ backend's own venv: importing this package must never import any of them."""
 from __future__ import annotations
 
 import importlib
+import os
+from typing import Any
 
 from sakura.atelier.types import Backend
 
-#: task -> backend module under sakura.atelier.backends. Contract §2.2.
-TASK_BACKENDS: dict[str, str] = {
-    "image_classification": "ludwig",
-    "audio_classification": "ludwig",
-    "tabular_classification": "ludwig",
-    "tabular_regression": "ludwig",
-    "object_detection": "ultralytics",
-    "text_generation": "peft",
-    "speech_recognition": "deepspeech",
-}
+# The routing tables are generated from registry/models.yaml (registry/routes.py), never
+# hand-kept here. `TASK_BACKENDS` / `MODEL_BACKENDS` stay importable (lazily, PEP 562):
+# TASK_BACKENDS = each task's default backend; MODEL_BACKENDS = the models whose backend is
+# not their task's default (or that set `model_route: true`).
 
-#: Models served by a backend other than their task's default.
-MODEL_BACKENDS: dict[str, str] = {"tabpfn_v2": "tabpfn"}
+
+def _routes() -> dict[str, Any]:
+    from sakura.atelier.registry.routes import routes
+    return routes()
+
+
+def __getattr__(name: str) -> Any:
+    if name == "TASK_BACKENDS":
+        return _routes()["tasks"]
+    if name == "MODEL_BACKENDS":
+        r = _routes()
+        from sakura.atelier.registry.routes import _models
+        models = _models()
+        return {m: b for m, b in r["models"].items()
+                if models[m].get("model_route") or any(r["tasks"].get(t) != b for t in models[m]["tasks"])}
+    raise AttributeError(name)
 
 
 def backend_name(task: str, model: str) -> str:
-    if model in MODEL_BACKENDS:
-        return MODEL_BACKENDS[model]
+    """The backend for a spec: its model's, else (`hf:<repo>@<sha>`) the task's HF backend,
+    else the task's default."""
+    r = _routes()
+    if model in r["models"]:
+        return str(r["models"][model])
+    if model.startswith("hf:") and task in r["hf_tasks"]:
+        return str(r["hf_tasks"][task])
     try:
-        return TASK_BACKENDS[task]
+        return str(r["tasks"][task])
     except KeyError:
         raise ValueError(f"no backend for task {task!r}") from None
 
 
 def load_backend(name: str) -> Backend:
-    module = importlib.import_module(f"sakura.atelier.backends.{name}")
+    """``sakura.atelier.backends.<name>.BACKEND``, unless
+    ``SAKURA_ATELIER_BACKEND_MODULE_<NAME>`` names another module to take it
+    from. The override exists for tests: the notebook agent's kernel is a
+    fresh process that resolves the backend by name, and this is how a fake
+    reaches it without a training stack installed."""
+    override = os.environ.get(f"SAKURA_ATELIER_BACKEND_MODULE_{name.upper().replace('-', '_')}")
+    module = importlib.import_module(override or f"sakura.atelier.backends.{name}")
     backend = module.BACKEND
     if not isinstance(backend, Backend):
         raise TypeError(f"sakura.atelier.backends.{name}.BACKEND does not implement Backend")

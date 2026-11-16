@@ -1,8 +1,11 @@
 # object_detection/fast@1 -- immutable once released (CONTRACTS §1.1).
-# Placeholder values for track E2's ultralytics backend (yolo11n); not tuned
-# here -- E2 owns backends/ultralytics.py and may report needed changes.
+# Sized for minutes-not-hours on an 11 GB GPU (RTX 2080 Ti): rtdetr_r18
+# (backends/hf_detection.py) fine-tuned from the Apache-2.0 PekingU/rtdetr_r18vd
+# checkpoint. Verified on the GPU host GPU0 against the coco128 holdout -- see this
+# track's handoff report for wall time + mAP.
 hyperparameters:
-  image_size: 640
-  epochs: 20
-  batch_size: 16
-  learning_rate: 0.001
+  imgsz: 640
+  epochs: 3
+  batch: 4
+  learning_rate: 0.0001
+  val_conf: 0.3

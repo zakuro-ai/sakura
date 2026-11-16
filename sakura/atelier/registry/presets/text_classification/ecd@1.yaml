@@ -1,0 +1,10 @@
+# text_classification/ecd@1 -- immutable once released (CONTRACTS §1.1).
+# A text input feature + a category output. `encoder` is learned from scratch by default (no downloads); set
+# `pretrained_model` (a Hugging Face id such as distilbert-base-uncased) to fine-tune a pretrained encoder.
+hyperparameters:
+  encoder: parallel_cnn
+  pretrained_model: null
+  trainable: true
+  epochs: 10
+  batch_size: 64
+  learning_rate: 0.001

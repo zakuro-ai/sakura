@@ -13,6 +13,7 @@ import pytest
 sakura_wire = pytest.importorskip("sakura_wire")
 
 from sakura.wire import Dispatcher, TlsConfig, WorkerSupervisor
+from sakura.dispatch.spawn import resolve_startup_timeout_s
 
 pytestmark = pytest.mark.wire
 
@@ -31,7 +32,7 @@ def test_echo_round_trip_through_worker():
     try:
         uri, cert = sup.spawn(
             cmd=[sys.executable, "-m", "sakura.worker", "--listen", "quic://127.0.0.1:0"],
-            startup_timeout_s=10.0,
+            startup_timeout_s=resolve_startup_timeout_s(),
         )
         assert uri.startswith("quic://127.0.0.1:")
         assert isinstance(cert, bytes) and len(cert) > 100  # rough self-signed cert size

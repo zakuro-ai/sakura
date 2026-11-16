@@ -30,7 +30,7 @@ def _codec():
 
 def _heavy_delta(seed: int = 0):
     """Gaussian bulk + sparse heavy outliers — the realistic delta shape the
-    int8 test in test_fed_local.py also uses."""
+    int8 test in experiments/test_fed_local.py also uses."""
     c = _codec()
     n = c.BUCKET * 7 + 123
     g = torch.Generator().manual_seed(seed)
@@ -130,3 +130,122 @@ def test_int4_ef_telescopes_and_decays_like_one_over_k():
     err120 = _telescope_err("int4", 120)
     assert err30 < 0.10, err30
     assert err120 < err30 * 0.6, (err30, err120)  # ~1/K decay (4× longer ⇒ <0.6×)
+
+
+# --- SparseLoCo (#88): int2 and topk2 ---------------------------------------
+
+
+def test_int2_roundtrip_ef_and_ratio():
+    c = _codec()
+    x = _heavy_delta()
+    payload, ef, contraction = c.codec_encode(x, None, "int2")
+    deq = c.codec_decode(payload, x.numel(), "int2")
+    assert deq.numel() == x.numel()
+    assert 0.0 < contraction <= 1.0
+    assert torch.allclose(ef, x - deq, atol=1e-6)  # EF = true residual
+    # symmetric ternary levels {-1, 0, +1}·scale per bucket
+    nb = -(-x.numel() // c.BUCKET)
+    scale = torch.frombuffer(bytearray(payload[: nb * 4]), dtype=torch.float32)
+    pad = (-x.numel()) % c.BUCKET
+    levels = torch.nn.functional.pad(deq, (0, pad)).view(nb, c.BUCKET) / scale[:, None]
+    assert set(levels.unique().tolist()) <= {-1.0, 0.0, 1.0}
+    # int2 packs 4 values/byte -> ~16× vs fp32
+    ratio = (x.numel() * 4) / len(payload)
+    assert ratio > 14.0, ratio
+
+
+def test_int2_crumb_packing_is_exact():
+    """Every level, at every crumb position and across a partial last bucket,
+    survives pack/unpack bit-exactly."""
+    c = _codec()
+    n = c.BUCKET + 5
+    x = torch.tensor([-1.0, 0.0, 1.0, 0.0, 1.0, -1.0, -1.0] * (n // 7 + 1))[:n]
+    payload, ef, _ = c.codec_encode(x, None, "int2")
+    deq = c.codec_decode(payload, n, "int2")
+    assert torch.equal(deq, x)
+    assert float(ef.abs().max()) == 0.0
+
+
+def test_int2_ef_telescopes_and_decays_like_one_over_k():
+    """Ternary levels are coarse (measured err30≈0.26, err120≈0.085,
+    err480≈0.023), so the constant is ~4× int4's; the 1/K decay is the proof
+    EF carries the residual."""
+    err30 = _telescope_err("int2", 30)
+    err120 = _telescope_err("int2", 120)
+    assert err30 < 0.35, err30
+    assert err120 < err30 * 0.6, (err30, err120)
+
+
+def test_topk2_keeps_largest_per_bucket_and_ef_is_full_residual():
+    c = _codec()
+    g = torch.Generator().manual_seed(3)
+    x = torch.zeros(c.BUCKET * 2 + 17)
+    perm = torch.randperm(x.numel(), generator=g)
+    x[perm] = torch.arange(1, x.numel() + 1, dtype=torch.float32)
+    x[::2] *= -1
+    payload, ef, contraction = c.codec_encode(x, None, "topk2:0.02")
+    deq = c.codec_decode(payload, x.numel(), "topk2:0.02")
+    assert deq.numel() == x.numel()
+    assert 0.0 < contraction <= 1.0
+    assert torch.allclose(ef, x - deq, atol=1e-4)  # dropped + quant residual
+    k = -(-c.BUCKET * 2 // 100)  # ceil(0.02*BUCKET) = 82
+    xp = torch.nn.functional.pad(x, (0, (-x.numel()) % c.BUCKET)).view(-1, c.BUCKET)
+    dp = torch.nn.functional.pad(deq, (0, (-x.numel()) % c.BUCKET)).view(-1, c.BUCKET)
+    for xb, db in zip(xp, dp):
+        top = set(torch.topk(xb.abs(), k).indices.tolist())
+        kept = set((db != 0).nonzero().flatten().tolist())
+        assert kept <= top  # only top-k positions may be transmitted
+        assert kept  # the bucket max always survives 2-bit rounding
+        # kept values are ±scale with the sign of the original entry
+        nz = db != 0
+        assert torch.equal(torch.sign(db[nz]), torch.sign(xb[nz]))
+        assert torch.allclose(db[nz].abs(), xb.abs().max().expand(int(nz.sum())))
+
+
+def test_topk2_bytes_per_round_at_2pct_at_least_4x_below_int8():
+    """Acceptance (#88): topk2 at density 0.02 ships >=4x fewer bytes/round
+    than int8 (it is ~20x)."""
+    c = _codec()
+    x = _heavy_delta()
+    p8, _, _ = c.codec_encode(x, None, "int8")
+    p2, _, _ = c.codec_encode(x, None, "topk2:0.02")
+    assert len(p8) >= 4 * len(p2), (len(p8), len(p2))
+    # and strictly smaller than the int8-valued topk at the same density
+    pk, _, _ = c.codec_encode(x, None, "topk:0.02")
+    assert len(p2) < len(pk)
+
+
+def test_topk2_default_density_is_sparseloco_regime():
+    c = _codec()
+    x = _heavy_delta()
+    p_default, _, _ = c.codec_encode(x, None, "topk2")
+    p_explicit, _, _ = c.codec_encode(x, None, f"topk2:{c.TOPK2_DENSITY}")
+    assert p_default == p_explicit
+    assert 0.01 <= c.TOPK2_DENSITY <= 0.03
+
+
+def test_topk2_ef_telescopes_and_decays_like_one_over_k():
+    err30 = _telescope_err("topk2:0.02", 30)
+    err120 = _telescope_err("topk2:0.02", 120)
+    assert err30 < 0.35, err30  # measured ≈0.26
+    assert err120 < err30 * 0.6, (err30, err120)
+
+
+@pytest.mark.parametrize("kind", ["int2", "topk2", "topk2:0.03"])
+def test_new_kinds_dispatch_and_are_lossy(kind):
+    c = _codec()
+    assert c.is_lossy(kind)
+    x = _heavy_delta()
+    payload, ef, _ = c.codec_encode(x, None, kind)
+    assert torch.allclose(c.codec_decode(payload, x.numel(), kind), x - ef, atol=1e-5)
+
+
+@pytest.mark.parametrize("kind", ["int3", "topk3:0.1", "int8:0.5", "topk2:0", "topk2:1.5"])
+def test_unknown_or_malformed_kind_rejected(kind):
+    c = _codec()
+    with pytest.raises(ValueError):
+        c.codec_encode(torch.zeros(8), None, kind)
+
+
+def test_fp32raw_not_lossy():
+    assert not _codec().is_lossy("fp32raw")

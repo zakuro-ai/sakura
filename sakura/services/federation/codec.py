@@ -7,10 +7,14 @@ import math
 from typing import List, Optional, Tuple
 
 import numpy as np
+import numpy.typing as npt
 import torch
 
 BUCKET = 4096
 TOPK_DENSITY = 0.1  # default kept fraction per bucket for the "topk" codec
+TOPK2_DENSITY = 0.02  # default for "topk2" (SparseLoCo regime: 1-3%)
+# Base codec kinds; "topk" and "topk2" also accept a ":<density>" suffix.
+CODEC_KINDS = ("int8", "int4", "int2", "topk", "topk2", "fp32raw")
 
 
 def quantize_int8(
@@ -94,6 +98,64 @@ def dequantize_int4(payload: bytes, numel: int) -> torch.Tensor:
     return deq.reshape(-1)[:numel].contiguous()
 
 
+def _pack_crumbs(q: torch.Tensor) -> bytes:
+    """Pack signed 2-bit values (two's-complement crumbs, 4 per byte, value i
+    in bits 2·(i mod 4)). Pads with zeros to a multiple of 4."""
+    u = q.reshape(-1).numpy().astype(np.uint8) & 0x03
+    pad = (-u.size) % 4
+    if pad:
+        u = np.concatenate([u, np.zeros(pad, dtype=np.uint8)])
+    packed = u[0::4] | (u[1::4] << 2) | (u[2::4] << 4) | (u[3::4] << 6)
+    return packed.astype(np.uint8).tobytes()
+
+
+def _unpack_crumbs(buf: "bytes | bytearray", count: int) -> npt.NDArray[np.int8]:
+    packed = np.frombuffer(bytearray(buf), dtype=np.uint8)
+    u = np.empty(packed.size * 4, dtype=np.uint8)
+    for j in range(4):
+        u[j::4] = (packed >> (2 * j)) & 0x03
+    q = u[:count].astype(np.int8)
+    q[q >= 2] -= 4  # crumb two's-complement -> signed [-2, 1]
+    return q
+
+
+def quantize_int2(
+    x: torch.Tensor, ef: Optional[torch.Tensor]
+) -> Tuple[bytes, torch.Tensor, float]:
+    """Bucketed symmetric int2 (crumb-packed, 4 values/byte) with error
+    feedback — same contract as quantize_int8/int4, ~16× vs fp32. Levels are
+    the symmetric ternary set {-1, 0, +1}·scale with scale = bucket amax
+    (the -2 code is unused, like -8 for int4), so every element's error is
+    ≤ its magnitude and contraction stays in (0, 1].
+    payload = n_buckets fp32 scales || packed crumbs."""
+    if ef is not None:
+        x = x + ef
+    if not torch.isfinite(x).all():
+        raise FloatingPointError("non-finite delta entering quantizer")
+    n = x.numel()
+    pad = (-n) % BUCKET
+    xp = torch.nn.functional.pad(x, (0, pad)) if pad else x
+    b = xp.view(-1, BUCKET)
+    scale = b.abs().amax(dim=1).clamp_min(1e-12)
+    q = torch.clamp(torch.round(b / scale[:, None]), -1, 1).to(torch.int8)
+    deq = q.float() * scale[:, None]
+    ef_new = (b - deq).reshape(-1)[:n].contiguous()
+    xn = float(x.norm()) or 1e-30
+    contraction = 1.0 - float(ef_new.norm()) ** 2 / xn**2
+    payload = scale.numpy().tobytes() + _pack_crumbs(q)  # BUCKET % 4 == 0
+    return payload, ef_new, contraction
+
+
+def dequantize_int2(payload: bytes, numel: int) -> torch.Tensor:
+    n_buckets = (numel + BUCKET - 1) // BUCKET
+    sbytes = n_buckets * 4
+    scale = torch.frombuffer(bytearray(payload[:sbytes]), dtype=torch.float32)
+    q = _unpack_crumbs(payload[sbytes:], n_buckets * BUCKET)
+    deq = torch.from_numpy(q).view(n_buckets, BUCKET).to(torch.float32)
+    deq = deq.mul_(scale[:, None])
+    return deq.reshape(-1)[:numel].contiguous()
+
+
 def _topk_k(density: float) -> int:
     return max(1, math.ceil(density * BUCKET))
 
@@ -151,20 +213,99 @@ def dequantize_topk(payload: bytes, numel: int) -> torch.Tensor:
     return deq.reshape(-1)[:numel].contiguous()
 
 
+def quantize_topk2(
+    x: torch.Tensor, ef: Optional[torch.Tensor], density: float
+) -> Tuple[bytes, torch.Tensor, float]:
+    """SparseLoCo-style codec (arXiv 2508.15706): bucket-local top-k magnitude
+    sparsification composed with an int2 payload of the kept values, with full
+    error feedback (dropped mass + 2-bit quantization residual carried
+    forward). Kept values use the same symmetric ternary levels as
+    quantize_int2, scaled by the per-bucket amax of the kept values.
+    payload = uint32 k || nb fp32 scales || nb·k uint16 indices
+              || ceil(nb·k/4) bytes of packed crumbs."""
+    if ef is not None:
+        x = x + ef
+    if not torch.isfinite(x).all():
+        raise FloatingPointError("non-finite delta entering quantizer")
+    n = x.numel()
+    pad = (-n) % BUCKET
+    xp = torch.nn.functional.pad(x, (0, pad)) if pad else x
+    b = xp.view(-1, BUCKET)
+    k = _topk_k(density)
+    idx = torch.topk(b.abs(), k, dim=1).indices  # (nb, k) positions in bucket
+    gathered = torch.gather(b, 1, idx)
+    scale = gathered.abs().amax(dim=1).clamp_min(1e-12)
+    q = torch.clamp(torch.round(gathered / scale[:, None]), -1, 1).to(torch.int8)
+    deq_sparse = torch.zeros_like(b)
+    deq_sparse.scatter_(1, idx, q.float() * scale[:, None])
+    ef_new = (b - deq_sparse).reshape(-1)[:n].contiguous()
+    xn = float(x.norm()) or 1e-30
+    contraction = 1.0 - float(ef_new.norm()) ** 2 / xn**2
+    payload = (
+        np.uint32(k).tobytes()
+        + scale.numpy().tobytes()
+        + idx.to(torch.int32).numpy().astype(np.uint16).tobytes()
+        + _pack_crumbs(q)
+    )
+    return payload, ef_new, contraction
+
+
+def dequantize_topk2(payload: bytes, numel: int) -> torch.Tensor:
+    k = int(np.frombuffer(bytearray(payload[:4]), dtype=np.uint32)[0])
+    nb = (numel + BUCKET - 1) // BUCKET
+    off = 4
+    scale = torch.frombuffer(bytearray(payload[off : off + nb * 4]), dtype=torch.float32)
+    off += nb * 4
+    idx = np.frombuffer(
+        bytearray(payload[off : off + nb * k * 2]), dtype=np.uint16
+    ).reshape(nb, k)
+    off += nb * k * 2
+    q = _unpack_crumbs(payload[off:], nb * k).reshape(nb, k)
+    deq = torch.zeros(nb, BUCKET, dtype=torch.float32)
+    vals = torch.from_numpy(q.astype(np.float32)) * scale[:, None]
+    deq.scatter_(1, torch.from_numpy(idx.astype(np.int64)), vals)
+    return deq.reshape(-1)[:numel].contiguous()
+
+
+def _codec_base(kind: str) -> str:
+    """Base kind of a codec string ("topk2:0.02" -> "topk2"); raises on an
+    unknown kind so a typo cannot silently select another codec."""
+    base = kind.split(":", 1)[0]
+    if base not in CODEC_KINDS or (":" in kind and base not in ("topk", "topk2")):
+        raise ValueError(f"unknown codec {kind!r}; expected one of {CODEC_KINDS}")
+    return base
+
+
 def _topk_density(kind: str) -> float:
-    return float(kind.split(":", 1)[1]) if ":" in kind else TOPK_DENSITY
+    base = _codec_base(kind)
+    if ":" not in kind:
+        return TOPK2_DENSITY if base == "topk2" else TOPK_DENSITY
+    density = float(kind.split(":", 1)[1])
+    if not 0.0 < density <= 1.0:
+        raise ValueError(f"codec density must be in (0, 1], got {kind!r}")
+    return density
+
+
+def is_lossy(kind: str) -> bool:
+    """True for codecs that need (dual-side) error feedback."""
+    return _codec_base(kind) != "fp32raw"
 
 
 def codec_encode(
     x: torch.Tensor, ef: Optional[torch.Tensor], kind: str
 ) -> Tuple[bytes, torch.Tensor, float]:
-    if kind == "int8":
+    base = _codec_base(kind)
+    if base == "int8":
         return quantize_int8(x, ef)
-    if kind == "int4":
+    if base == "int4":
         return quantize_int4(x, ef)
-    if kind.startswith("topk"):
+    if base == "int2":
+        return quantize_int2(x, ef)
+    if base == "topk":
         return quantize_topk(x, ef, _topk_density(kind))
-    if kind == "fp32raw":  # lossless reference rung; EF stays zero
+    if base == "topk2":
+        return quantize_topk2(x, ef, _topk_density(kind))
+    if base == "fp32raw":  # lossless reference rung; EF stays zero
         if not torch.isfinite(x).all():
             raise FloatingPointError("non-finite delta")
         return x.numpy().tobytes(), torch.zeros_like(x), 1.0
@@ -172,13 +313,18 @@ def codec_encode(
 
 
 def codec_decode(payload: bytes, numel: int, kind: str) -> torch.Tensor:
-    if kind == "int8":
+    base = _codec_base(kind)
+    if base == "int8":
         return dequantize_int8(payload, numel)
-    if kind == "int4":
+    if base == "int4":
         return dequantize_int4(payload, numel)
-    if kind.startswith("topk"):
+    if base == "int2":
+        return dequantize_int2(payload, numel)
+    if base == "topk":
         return dequantize_topk(payload, numel)
-    if kind == "fp32raw":
+    if base == "topk2":
+        return dequantize_topk2(payload, numel)
+    if base == "fp32raw":
         return torch.frombuffer(bytearray(payload), dtype=torch.float32)[:numel].clone()
     raise ValueError(kind)
 

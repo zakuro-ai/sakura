@@ -1,0 +1,8 @@
+# audio_classification/hf-finetune@1 -- immutable once released (CONTRACTS §1.1).
+# Fine-tune any Hugging Face audio_classification repo (model: hf:<repo>@<sha>); the repo's own
+# processor sets image size / sample rate / tokenisation.
+hyperparameters:
+  epochs: 3
+  batch_size: 8
+  learning_rate: 0.00003
+  weight_decay: 0.01
