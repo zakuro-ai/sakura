@@ -77,6 +77,7 @@ def test_elapsed_us_is_reported(disp):
     assert disp.submit(_double, 1).result(30).elapsed_us >= 0
 
 
+@pytest.mark.timing  # wall-clock CPU-contention ratio: needs spare cores; fails on 2-vCPU hosted runners
 def test_runs_in_parallel_without_gil_contention(disp):
     # A GIL-bound busy loop in the worker must not slow a busy loop in the parent.
     solo = _busy(0.5)

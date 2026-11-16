@@ -6,9 +6,9 @@ its own ``reset_peak_memory_stats``, and no cross-config peak-memory
 contamination), then renders the comparison table and runs the P0 *sanity
 gate* (this driver's acceptance check).
 
-This is a GPU job; run it on a CUDA host from the repository root::
+This is a GPU job (developed on an RTX 2080 Ti): run it from a checkout of this repository::
 
-    CUDA_VISIBLE_DEVICES=0 python scripts/bench_p0_ablation.py --out-dir ~/p0-reports
+    CUDA_VISIBLE_DEVICES=0 python scripts/bench_p0_ablation.py --out-dir ./p0-reports
 
 ``--dry-run`` prints the exact per-config commands without executing (no GPU).
 """

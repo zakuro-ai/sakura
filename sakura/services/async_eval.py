@@ -29,6 +29,10 @@ skip the trial when it could not pay off, so short/cheap runs never even pay the
 A/B cost. Worst case the wall-clock equals the synchronous baseline plus the few
 trial epochs (only entered when there are spare epochs and the eval is non-trivial),
 making a net-negative result structurally unreachable.
+
+Every wall-clock measurement goes through the ``clock`` constructor argument (a
+monotonic seconds counter, default :func:`time.perf_counter`). Tests inject a
+scripted fake clock so the gate's decisions are exact and sleep-free.
 """
 from __future__ import annotations
 
@@ -70,8 +74,12 @@ class AsyncEval(BaseService):
         max_pending: int = 4,
         on_backpressure: Literal["skip", "queue", "block"] = "skip",
         every: int = 1,
+        clock: Callable[[], float] = time.perf_counter,
     ):
         super().__init__()
+        # Monotonic seconds counter behind every timing measurement. Injectable
+        # so the adaptive gate / warmup profiler can be tested deterministically.
+        self._clock = clock
         self._eval_fn = eval_fn
         self._eval_payload = eval_payload
         self._dispatcher = dispatcher
@@ -161,7 +169,7 @@ class AsyncEval(BaseService):
     # ----- event handlers -----
     def on_train_begin(self, event: OnTrainBegin) -> None:
         self._val_loader = event.val_loader
-        self._last_exit = time.perf_counter()  # so epoch 0's full cost is measurable
+        self._last_exit = self._clock()  # so epoch 0's full cost is measurable
 
     def on_epoch_end(self, event: OnEpochEnd) -> None:
         if event.rank != 0:
@@ -187,7 +195,7 @@ class AsyncEval(BaseService):
 
         # Full per-epoch wall-cost = exit-to-exit span = train(this epoch) +
         # eval-handling(this epoch). Cleanly attributed to one epoch and one mode.
-        now = time.perf_counter()
+        now = self._clock()
         if self._last_exit is not None:
             cost_ms = (now - self._last_exit) * 1e3
             if entry_mode == "sync":
@@ -264,9 +272,9 @@ class AsyncEval(BaseService):
         # When training on GPU this is far faster than the CPU-copy sync_eval_fn,
         # so the gate's "don't overlap" fallback no longer pays a CPU penalty.
         eval_fn = self._device_eval_fn or self._sync_eval_fn
-        t0 = time.perf_counter()
+        t0 = self._clock()
         metrics = eval_fn(event.model, self._val_loader)  # type: ignore[misc]
-        e_ms = (time.perf_counter() - t0) * 1e3
+        e_ms = (self._clock() - t0) * 1e3
         self._eval_ewma = e_ms if self._eval_ewma is None else 0.5 * self._eval_ewma + 0.5 * e_ms
         self._record_metrics(event.epoch, metrics)
         self._sync_evals += 1
@@ -280,9 +288,9 @@ class AsyncEval(BaseService):
         just running eval on the (fast) training device — e.g. an RNN whose CPU
         eval is far slower than its GPU eval. No snapshot, no dispatch, no GIL
         contention with the training loop."""
-        t0 = time.perf_counter()
+        t0 = self._clock()
         metrics = self._device_eval_fn(event.model, self._val_loader)  # type: ignore[misc]
-        e_ms = (time.perf_counter() - t0) * 1e3
+        e_ms = (self._clock() - t0) * 1e3
         self._eval_ewma = e_ms if self._eval_ewma is None else 0.5 * self._eval_ewma + 0.5 * e_ms
         self._record_metrics(event.epoch, metrics)
         self._decisions.append((event.epoch, "sync_device"))
@@ -295,14 +303,14 @@ class AsyncEval(BaseService):
         discarded to absorb cudnn-autotune / worker warm-up. After
         ``calibration_epochs`` measured epochs (or when epochs are about to run
         out) it commits to ``sync_device`` or ``async``."""
-        entry = time.perf_counter()
+        entry = self._clock()
         t_train_ms = (entry - self._last_exit) * 1e3 if self._last_exit is not None else 0.0
         if self._overhead_ms is None:
             self._overhead_ms = self._measure_overhead(event.model)
             self._model_cuda = self._is_cuda(event.model)
-        t0 = time.perf_counter()
+        t0 = self._clock()
         metrics = self._device_eval_fn(event.model, self._val_loader)  # type: ignore[misc]
-        t_eval_device_ms = (time.perf_counter() - t0) * 1e3
+        t_eval_device_ms = (self._clock() - t0) * 1e3
         self._eval_ewma = (
             t_eval_device_ms if self._eval_ewma is None
             else 0.5 * self._eval_ewma + 0.5 * t_eval_device_ms
@@ -322,13 +330,13 @@ class AsyncEval(BaseService):
                 except Exception:  # noqa: BLE001 — probe must never break training
                     self._t_eval_cpu_ms = float("inf")
             elif self._sync_eval_fn is not None:
-                t1 = time.perf_counter()
+                t1 = self._clock()
                 try:
                     self._sync_eval_fn(event.model, self._val_loader)
                 except Exception:  # noqa: BLE001
                     self._t_eval_cpu_ms = float("inf")
                 else:
-                    self._t_eval_cpu_ms = (time.perf_counter() - t1) * 1e3
+                    self._t_eval_cpu_ms = (self._clock() - t1) * 1e3
         self._profile_samples.append((t_train_ms, t_eval_device_ms))
         remaining = (
             self._total_epochs - 1 - event.epoch if self._total_epochs is not None else None
@@ -367,16 +375,16 @@ class AsyncEval(BaseService):
         clone_ms = 0.0
         try:
             sd = model.state_dict()
-            t0 = time.perf_counter()
+            t0 = self._clock()
             _ = {k: (v.detach().cpu().clone() if hasattr(v, "detach") else v) for k, v in sd.items()}
-            clone_ms = (time.perf_counter() - t0) * 1e3
+            clone_ms = (self._clock() - t0) * 1e3
         except Exception:  # noqa: BLE001 — probe must never break training
             pass
         dispatch_ms = 0.0
         try:
-            t0 = time.perf_counter()
+            t0 = self._clock()
             self._dispatcher.submit(_noop_eval, -1, None).result()
-            dispatch_ms = (time.perf_counter() - t0) * 1e3
+            dispatch_ms = (self._clock() - t0) * 1e3
         except Exception:  # noqa: BLE001
             pass
         return clone_ms + dispatch_ms

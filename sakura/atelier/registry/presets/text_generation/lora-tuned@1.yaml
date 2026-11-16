@@ -1,0 +1,34 @@
+# text_generation/lora-tuned@1 -- immutable once released (CONTRACTS §1.1).
+# A tuned LoRA recipe for instruction and structured-output data (peft backend). Against lora-fast@1 it
+# adds a learning-rate schedule (linear warmup, then cosine decay to a floor), gradient clipping, batches
+# of similar length, ten evaluations per epoch on a fixed subset of the validation rows, early stopping,
+# the best adapter kept for the export, metrics chosen from the validation targets, a generation length
+# sized to those targets, and the untrained base model scored first on the same rows. Every key is
+# documented in CONTRACTS §2.2 ("Schedule, evaluation and metrics"). `base_model` is not here on
+# purpose: it comes from the model entry (lfm2-350m) or from `overrides` (hf-causal-lm requires it).
+hyperparameters:
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  epochs: 3
+  batch_size: 4
+  grad_accum: 4  # 16 rows per optimiser step
+  learning_rate: 0.0002  # the peak, reached after the warmup
+  lr_schedule: cosine
+  warmup_ratio: 0.03
+  min_lr_ratio: 0.1
+  max_grad_norm: 1.0
+  group_by_length: true
+  eval_every: 0.1  # ten evaluations per epoch
+  eval_max_rows: 256
+  gen_eval_rows: 32
+  final_gen_rows: 500
+  runtime_eval_rows: 50  # each export is re-scored on the first 50 of those rows: a CPU check of a long prompt is slow
+  eval_batch_size: 8
+  early_stop_patience: 5
+  keep_best: true
+  eval_max_new_tokens: auto
+  metrics: auto
+  baseline: true
+  max_seq_length: 2048
+  precision: bf16

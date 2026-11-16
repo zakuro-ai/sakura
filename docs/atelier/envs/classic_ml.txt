@@ -1,0 +1,25 @@
+# sakura/atelier/backends/classic_ml.py -- exact pins, verified by tests/atelier/test_classic_ml.py
+# (CPU, python 3.12: numpy 2.5 needs it). No torch: these estimators train on CPU.
+# python: 3.12
+#
+# Licences: lightgbm MIT; xgboost, catboost, onnxmltools, skl2onnx, onnxruntime Apache-2.0;
+# scikit-learn, joblib, numpy, pandas BSD-3-Clause.
+
+catboost==1.2.10
+joblib==1.6.0
+lightgbm==4.7.0
+numpy==2.5.4
+onnxmltools==1.16.0
+pandas==3.1.1
+scikit-learn==1.9.1
+skl2onnx==1.20.0
+xgboost==3.4.1
+onnx==1.23.1
+onnxruntime==1.30.0
+pyyaml>=6.0
+
+# notebook bundle (CONTRACTS §2.5)
+nbformat>=5.10
+nbclient>=0.10
+ipykernel>=6.29
+matplotlib>=3.8

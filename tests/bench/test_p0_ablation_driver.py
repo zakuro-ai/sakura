@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -77,8 +78,11 @@ def test_check_sanity_flags_zero_util_and_orphans():
 
 
 def test_count_orphan_workers_no_workers_returns_zero():
-    # argv-list pgrep (no shell) -> no self-match; no workers in the test env.
-    assert drv.count_orphan_workers() == 0
+    # argv-list pgrep (no shell) -> no self-match. A pattern only this test uses: the
+    # default one also matches real `python -m sakura.worker` children, which the
+    # services tests spawn on other pytest-xdist workers at the same time.
+    pattern = rf"python.* -m sakura\.worker-{uuid.uuid4().hex}"
+    assert drv.count_orphan_workers(pattern) == 0
 
 
 def test_dry_run_prints_all_commands_without_executing(capsys, tmp_path):

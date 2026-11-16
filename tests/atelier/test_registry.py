@@ -42,9 +42,9 @@ def test_unknown_model_is_refused():
 
 
 def test_model_task_mismatch_is_refused():
-    # yolo11n only supports object_detection; this spec's task is
+    # rtdetr_r18 only supports object_detection; this spec's task is
     # image_classification -- a registered model used for the wrong task.
-    spec_text = BASE.replace("model: resnet18", "model: yolo11n")
+    spec_text = BASE.replace("model: resnet18", "model: rtdetr_r18")
     with pytest.raises(ValueError, match="does not support task"):
         resolve(load_spec(spec_text))
 

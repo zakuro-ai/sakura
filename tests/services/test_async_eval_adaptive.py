@@ -62,12 +62,36 @@ class _SlowInThread(InThreadDispatcher):
         return r
 
 
-def _drive(svc, n_epochs, model, train_sleep=0.0):
+class _FakeClock:
+    """Thread-safe scripted monotonic clock (seconds) for AsyncEval(clock=...).
+
+    Time only moves when a test calls ``advance`` — the simulated train epoch
+    and the *synchronous* eval paths advance it on the training thread, while an
+    async eval running on a dispatcher worker does not (that is exactly what
+    overlap means: it costs the training loop no wall-clock). The lock makes
+    reads/advances safe if a worker thread ever touches the clock."""
+
+    def __init__(self, start=1000.0):
+        self._t = float(start)
+        self._lock = threading.Lock()
+
+    def __call__(self) -> float:
+        with self._lock:
+            return self._t
+
+    def advance_ms(self, ms) -> None:
+        with self._lock:
+            self._t += ms / 1e3
+
+
+def _drive(svc, n_epochs, model, train_sleep=0.0, clock=None, train_ms=0.0):
     rt = SakuraRuntime()
     rt.install(svc)
     rt.dispatch(OnTrainBegin(model=model, optimizer="o", train_loader=None,
                              val_loader="vl", rank=0, world_size=1))
     for e in range(n_epochs):
+        if clock is not None and train_ms:
+            clock.advance_ms(train_ms)  # scripted epoch training time
         if train_sleep:
             time.sleep(train_sleep)  # simulate epoch training time
         rt.dispatch(OnEpochEnd(epoch=e, model=model, optimizer="o", metrics={},
@@ -89,10 +113,14 @@ class TestAdaptiveGate:
         assert disp.submits == 1  # overhead probe only — no per-epoch async overhead
         assert len(svc.history) == 8
 
-    @pytest.mark.timing
     def test_overlap_helps_keeps_async(self):
         """Heavy eval + a real thread (async returns immediately) → async epoch
         period is far below sync period → gate locks to async.
+
+        Driven by a scripted clock: train = 10 ms/epoch, sync eval = 30 ms on
+        the training thread, async eval costs the training loop nothing. So sync
+        epochs measure exactly 40 ms and trial epochs exactly 10 ms — the gate's
+        decision is exact and instant (no sleep, no CI contention).
 
         Updated for gate-aware backpressure: once the gate decides async, new
         epochs may be skipped (not blocked) when the queue is saturated, so
@@ -101,21 +129,62 @@ class TestAdaptiveGate:
         """
         model = _model()
         disp = _SpyThread(max_workers=1)
+        clock = _FakeClock()
 
-        def slow_eval(*_a):
-            time.sleep(0.03)  # 30ms eval
+        def sync_eval(*_a):
+            clock.advance_ms(30)  # 30ms eval, paid by the training loop
             return {"val_loss": 0.1}
 
-        svc = AsyncEval(eval_fn=lambda e, p: slow_eval(), eval_payload=None,
-                        dispatcher=disp, sync_eval_fn=lambda m, vl: slow_eval(),
-                        adaptive=True, calibration_epochs=2, trial_epochs=2)
-        _drive(svc, n_epochs=10, model=model)
+        svc = AsyncEval(eval_fn=lambda e, p: {"val_loss": 0.1}, eval_payload=None,
+                        dispatcher=disp, sync_eval_fn=sync_eval,
+                        adaptive=True, calibration_epochs=2, trial_epochs=2,
+                        clock=clock)
+        _drive(svc, n_epochs=10, model=model, clock=clock, train_ms=10)
         assert svc.mode == "async"
         modes = [d[1] for d in svc.decisions]
         # Gate went through trial calibration before deciding.
         assert "trial" in modes
+        assert svc.timing["sync_cost_ms"] == pytest.approx(40.0)
+        assert svc.timing["trial_cost_ms"] == pytest.approx(10.0)
+        assert svc.overhead_ms == pytest.approx(0.0)
         disp.shutdown()
 
+    def test_overlap_does_not_help_reverts_to_sync_fake_clock(self):
+        """Counterpart of the above on the same scripted clock: the async path
+        pays a 35 ms dispatch latency on the training thread (no real overlap),
+        so trial epochs measure 45 ms > 40 ms sync — the gate must revert."""
+        model = _model()
+        clock = _FakeClock()
+
+        class _LaggyInThread(InThreadDispatcher):
+            def __init__(self):
+                self.calls = 0
+
+            def submit(self, callable, *args, **kwargs):
+                self.calls += 1
+                if self.calls > 1:  # not the one-time overhead probe
+                    clock.advance_ms(35)
+                return super().submit(callable, *args, **kwargs)
+
+        def sync_eval(*_a):
+            clock.advance_ms(30)
+            return {"val_loss": 0.1}
+
+        svc = AsyncEval(eval_fn=lambda e, p: {"val_loss": 0.1}, eval_payload=None,
+                        dispatcher=_LaggyInThread(), sync_eval_fn=sync_eval,
+                        adaptive=True, calibration_epochs=2, trial_epochs=2,
+                        min_gain=0.03, clock=clock)
+        _drive(svc, n_epochs=10, model=model, clock=clock, train_ms=10)
+        assert svc.mode == "locked_sync"
+        assert "trial" in [d[1] for d in svc.decisions]
+        assert svc.timing["sync_cost_ms"] == pytest.approx(40.0)
+        assert svc.timing["trial_cost_ms"] == pytest.approx(45.0)
+
+    # Wall-clock sleeps: on a contended runner the 100 ms vs ~120 ms epochs blur
+    # and the gate keeps async (failed CI run #148 on the cpu pool).
+    # test_overlap_does_not_help_reverts_to_sync_fake_clock covers the same
+    # guarantee deterministically.
+    @pytest.mark.timing
     def test_async_without_overlap_reverts_to_sync(self):
         """The crucial guarantee: a synchronous dispatcher means async eval runs
         inline (no overlap), so its epoch period is NOT faster than sync — the
@@ -337,15 +406,17 @@ class TestWarmupProfiler:
         assert len(svc.history) == 8
         disp.shutdown()
 
-    @pytest.mark.timing
     def test_picks_async_when_overlap_wins(self):
         # device eval is non-trivial (sync_device would pay it every epoch) but
         # the CPU eval is cheap enough to fully hide under a longer train epoch.
+        # Scripted clock: train = 50 ms, device eval = 20 ms, CPU eval = 20 ms
+        # -> sync_device = 70 ms vs async = max(50, 20) + 0 = 50 ms: exact.
         model = _model()
         disp = _SpyThread(max_workers=1)
+        clock = _FakeClock()
 
         def dev_eval(*_a):
-            time.sleep(0.02)  # 20ms on-device eval
+            clock.advance_ms(20)  # 20ms on-device eval
             return {"val_loss": 0.1}
 
         svc = AsyncEval(
@@ -353,9 +424,40 @@ class TestWarmupProfiler:
             sync_eval_fn=lambda m, vl: {"val_loss": 0.1},
             device_eval_fn=lambda m, vl: dev_eval(),
             cpu_probe_fn=lambda m: 20.0,  # 20ms CPU eval << 50ms train -> hides
-            adaptive=True, calibration_epochs=2, total_epochs=10,
+            adaptive=True, calibration_epochs=2, total_epochs=10, clock=clock,
         )
-        _drive(svc, n_epochs=10, model=model, train_sleep=0.05)
+        _drive(svc, n_epochs=10, model=model, clock=clock, train_ms=50)
         assert svc.mode == "async"
-        assert svc.allocation["choice"] == "async"
+        alloc = svc.allocation
+        assert alloc["choice"] == "async"
+        assert alloc["t_train_ms"] == pytest.approx(50.0)
+        assert alloc["t_eval_device_ms"] == pytest.approx(20.0)
+        assert alloc["overhead_ms"] == pytest.approx(0.0)
+        assert alloc["sync_device_cost_ms"] == pytest.approx(70.0)
+        assert alloc["async_cost_ms"] == pytest.approx(50.0)
+        disp.shutdown()
+
+    def test_picks_sync_device_when_overlap_loses_fake_clock(self):
+        # Same scripted clock, but the CPU eval (80 ms) can't hide under the
+        # 50 ms train: async = 80 ms vs sync_device = 70 ms -> sync_device.
+        model = _model()
+        disp = _SpyThread(max_workers=1)
+        clock = _FakeClock()
+
+        def dev_eval(*_a):
+            clock.advance_ms(20)
+            return {"val_loss": 0.1}
+
+        svc = AsyncEval(
+            eval_fn=lambda e, p: {"val_loss": 0.1}, eval_payload=None, dispatcher=disp,
+            sync_eval_fn=lambda m, vl: {"val_loss": 0.1},
+            device_eval_fn=lambda m, vl: dev_eval(),
+            cpu_probe_fn=lambda m: 80.0,
+            adaptive=True, calibration_epochs=2, total_epochs=10, clock=clock,
+        )
+        _drive(svc, n_epochs=10, model=model, clock=clock, train_ms=50)
+        assert svc.mode == "sync_device"
+        assert svc.allocation["sync_device_cost_ms"] == pytest.approx(70.0)
+        assert svc.allocation["async_cost_ms"] == pytest.approx(80.0)
+        assert disp.submits == 1  # only the one-time overhead probe
         disp.shutdown()

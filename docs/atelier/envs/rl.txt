@@ -1,0 +1,22 @@
+# sakura/atelier/backends/rl.py -- verified by tests/atelier/test_backend_rl.py and
+# tests/atelier/test_kg_env.py (CPU, python 3.12: numpy 2.5 needs it).
+# python: 3.12
+#
+# CPU only: install torch from the CPU wheel index (https://download.pytorch.org/whl/cpu). No GPU build is
+# needed and none is used. onnx and onnxruntime are needed only for the `onnx` export and its re-scoring.
+#
+# Licences: torch, numpy, pandas BSD-3-Clause; pyarrow, onnx Apache-2.0; onnxruntime MIT.
+
+torch==2.15.0
+numpy==2.5.4
+pandas==3.1.1
+pyarrow==26.0.1
+onnx==1.23.2
+onnxruntime==1.32.0
+pyyaml>=6.0
+
+# notebook bundle (CONTRACTS §2.5)
+nbformat>=5.10
+nbclient>=0.10
+ipykernel>=6.29
+matplotlib>=3.8

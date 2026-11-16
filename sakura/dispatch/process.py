@@ -17,6 +17,11 @@ Usage::
     fut = disp.submit(write_checkpoint, cpu_state_dict, "ckpt/epoch_3.pt")
     fut.result().value
 
+Trust model: the worker is a child process of this process (same user, local OS pipes, no
+network), so cloudpickle here crosses no trust boundary. This dispatcher must not be pointed at
+an untrusted peer; the network dispatchers (``RemoteDispatcher``/``LocalDispatcher``) are where
+SAK-0016 applies.
+
 Callables are cloudpickled (lambdas / closures are fine). Heavy, reusable objects (a model
 replica, a data loader) should be built once by ``initializer`` and read inside callables via
 :func:`worker_state`. Entry points that launch a ``ProcessDispatcher`` must be importable
@@ -141,7 +146,8 @@ def _worker_main(req_q: Any, res_q: Any, nice: int, torch_threads: Optional[int]
         # training loop for seconds; the queue is fed by a background thread.
         init_blob = req_q.get()
         if init_blob is not None:
-            fn, args, kwargs = cloudpickle.loads(init_blob)
+            # Local child-process pipe, not the wire (module docstring, SAK-0016).
+            fn, args, kwargs = cloudpickle.loads(init_blob)  # nosemgrep: sakura.deserialization.cloudpickle-loads-untrusted
             _STATE["init"] = fn(*args, **kwargs)
         res_q.put((-1, True, None))
     except BaseException as exc:  # noqa: BLE001
@@ -155,7 +161,8 @@ def _worker_main(req_q: Any, res_q: Any, nice: int, torch_threads: Optional[int]
         t0 = time.perf_counter_ns()
         try:
             args, kwargs = _unpack(skeleton, flat)
-            value = cloudpickle.loads(fn_blob)(*args, **kwargs)
+            # Local child-process pipe, not the wire (module docstring, SAK-0016).
+            value = cloudpickle.loads(fn_blob)(*args, **kwargs)  # nosemgrep: sakura.deserialization.cloudpickle-loads-untrusted
             del args, kwargs, flat, msg
             res_q.put((rid, True, (_pack(value), (time.perf_counter_ns() - t0) // 1000)))
         except BaseException as exc:  # noqa: BLE001
@@ -185,7 +192,8 @@ class _ProcessFuture(Future):
         blob, tb = self._payload
         if blob is not None:
             try:
-                exc = cloudpickle.loads(blob)
+                # Local child-process pipe, not the wire (module docstring, SAK-0016).
+                exc = cloudpickle.loads(blob)  # nosemgrep: sakura.deserialization.cloudpickle-loads-untrusted
             except Exception:  # noqa: BLE001
                 exc = None
             if isinstance(exc, BaseException):

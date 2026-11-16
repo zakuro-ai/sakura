@@ -111,3 +111,11 @@ def test_both_split_spellings_at_once_are_refused():
     bad = HUB_SPEC.replace("  validation_fraction: 0.2", "  validation_fraction: 0.2\n  split: {train: a, validation: b}")
     with pytest.raises(Exception, match="not both"):
         load_spec(bad)
+
+
+def test_a_gpu_spec_that_may_run_on_a_cpu_loads():
+    # The hub drafts `cpu_fallback` for every GPU model (false until the customer
+    # accepts a CPU's ETA); a strict Placement refused it and failed the job.
+    for value in (False, True):
+        spec = load_spec(HUB_SPEC.replace("min_vram_gb: null}", f"min_vram_gb: 8, cpu_fallback: {str(value).lower()}}}"))
+        assert spec.placement.cpu_fallback is value and spec.placement.min_vram_gb == 8
