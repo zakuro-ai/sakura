@@ -7,6 +7,7 @@
 </p>
 
 <p align="center">
+  <a href="#try-it-in-one-command">Try it</a> •
   <a href="#install">Install</a> •
   <a href="#quickstart">Quickstart</a> •
   <a href="#architecture">Architecture</a> •
@@ -18,6 +19,28 @@
 </p>
 
 ---
+
+## Try it in one command
+
+```bash
+git clone https://github.com/zakuro-ai/sakura && cd sakura
+uv run demo.py
+```
+
+No GPU, no dataset download, no build step: [`uv`](https://docs.astral.sh/uv/getting-started/installation/) installs the published `sakura-ml` wheel (and CPU-only PyTorch on Linux) into a throwaway environment, then trains the same small classifier twice, plain PyTorch first and then with Sakura's `AsyncEval`, and prints both timings. Each setup gets its own fastest CPU thread count, so plain PyTorch isn't handicapped. Measured on an Apple-silicon Mac, 9 s end to end:
+
+```
+  setup           threads  median time   final val acc
+  plain PyTorch         1       0.43 s           0.779
+  with Sakura           1       0.32 s           0.779
+
+  1.34x faster on this machine (25% less wall-clock), same model, same accuracy:
+  evaluation now overlaps the next epoch instead of blocking it.
+```
+
+Your numbers will differ. On a 2017 4-core Intel laptop the same demo measures 1.03x, because training there already keeps every core busy and there is nothing for evaluation to overlap with; the demo says so instead of hiding it. The whole demo is one file, [`demo.py`](demo.py); the Sakura part is about fifteen lines of `run_sakura()`.
+
+If Sakura saves you time, a star helps other people find it, and it's the easiest way to follow new releases.
 
 ## What is Sakura?
 
@@ -49,15 +72,15 @@ pip install sakura-ml
 pip install 'sakura-ml[lightning,huggingface]'
 ```
 
-From source:
+Prebuilt wheels are published for macOS (Apple silicon), Linux (x86_64, aarch64) and Windows (x86_64), Python 3.10+, so no Rust toolchain is needed. On Linux, `pip install sakura-ml --extra-index-url https://download.pytorch.org/whl/cpu` gets the CPU-only PyTorch build instead of the multi-GB CUDA one.
+
+From source (contributors; needs a Rust toolchain):
 
 ```bash
 git clone https://github.com/zakuro-ai/sakura && cd sakura
 uv pip install maturin
 maturin develop --release
 ```
-
-> **Wheel packaging** is being finalized — until then, the from-source path is the recommended install.
 
 ## Quickstart
 

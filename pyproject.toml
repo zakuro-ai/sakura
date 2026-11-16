@@ -9,6 +9,7 @@ description = "Sakura: SOTA training services for PyTorch DDP / Lightning / Hugg
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.10"
+keywords = ["pytorch", "deep-learning", "distributed-training", "async-evaluation", "async-checkpoint", "pytorch-lightning", "huggingface", "mixed-precision", "zero", "quic"]
 authors = [{ name = "ZakuroAI", email = "git@zakuro-ai.com" }]
 dependencies = [
     "tqdm>=4.68.2",
@@ -53,6 +54,13 @@ bench = ["sakura-ml[huggingface]", "nvidia-ml-py>=12.535.108"]
 
 [dependency-groups]
 dev = ["pytest", "pytest-cov", "maturin>=1.4", "mypy>=1.10"]
+
+[project.urls]
+Homepage = "https://github.com/zakuro-ai/sakura"
+Documentation = "https://docs.zakuro-ai.com/sakura/overview"
+Repository = "https://github.com/zakuro-ai/sakura"
+Issues = "https://github.com/zakuro-ai/sakura/issues"
+Changelog = "https://github.com/zakuro-ai/sakura/blob/master/CHANGELOG.md"
 
 [project.scripts]
 sakura-worker = "sakura.worker.__main__:main"
