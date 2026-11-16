@@ -134,12 +134,16 @@ def run_sakura(data) -> tuple[float, float]:
 
 
 # --------------------------------------------------------------------------- main
-def fastest_threads(fn, data, candidates: list[int]) -> int:
-    """One quick run per candidate thread count; keep the fastest."""
+def fastest_threads(fn, data, candidates: list[int], repeats: int = 2) -> int:
+    """Time each candidate thread count (best of `repeats` runs); keep the fastest.
+
+    Best-of-N, not a single run: one noisy run must not hand plain PyTorch a
+    slow thread count and make Sakura look better than it is.
+    """
     timed = []
     for t in candidates:
         torch.set_num_threads(t)
-        timed.append((fn(data)[0], t))
+        timed.append((min(fn(data)[0] for _ in range(repeats)), t))
     return min(timed)[1]
 
 
