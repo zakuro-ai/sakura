@@ -4,23 +4,26 @@ build-backend = "maturin"
 
 [project]
 name = "sakura-ml"
-version = "1.1.0"
+version = "1.2.0"
 description = "Sakura: SOTA training services for PyTorch DDP / Lightning / HuggingFace Trainer."
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.10"
+keywords = ["pytorch", "deep-learning", "distributed-training", "async-evaluation", "async-checkpoint", "pytorch-lightning", "huggingface", "mixed-precision", "zero", "quic"]
 authors = [{ name = "ZakuroAI", email = "git@zakuro-ai.com" }]
 dependencies = [
     "tqdm>=4.68.2",
     "torch",
     "torchvision",
     "numpy",
-    "gnutools-python",
     "chardet",
     "lightning",
     "ipython",
     "charset-normalizer>=3.4.7",
     "zakuro-ai>=0.2.23",
+    # sakura.dispatch.signing imports it directly (HMAC-signed fallback codec);
+    # it used to arrive only through zakuro-ai.
+    "cloudpickle",
     # sakura.atelier: the AtelierSpec schema and its YAML. Training stacks
     # (ludwig, ultralytics, tabpfn, peft) are NOT dependencies -- each lives in
     # its backend venv and is imported lazily (docs/atelier/CONTRACTS.md §2).
@@ -50,9 +53,18 @@ huggingface = [
     "accelerate>=1.13.0",
 ]
 bench = ["sakura-ml[huggingface]", "nvidia-ml-py>=12.535.108"]
+# CONTRACTS §2.5: the run writes and re-executes its own notebook, inside the backend venv.
+notebook = ["nbformat>=5.10", "nbclient>=0.10", "ipykernel>=6.29", "matplotlib>=3.8"]
 
 [dependency-groups]
-dev = ["pytest", "pytest-cov", "maturin>=1.4", "mypy>=1.10"]
+dev = ["pytest", "pytest-cov", "maturin>=1.4", "mypy>=1.10", "sakura-ml[notebook]"]
+
+[project.urls]
+Homepage = "https://github.com/zakuro-ai/sakura"
+Documentation = "https://docs.zakuro-ai.com/sakura/overview"
+Repository = "https://github.com/zakuro-ai/sakura"
+Issues = "https://github.com/zakuro-ai/sakura/issues"
+Changelog = "https://github.com/zakuro-ai/sakura/blob/master/CHANGELOG.md"
 
 [project.scripts]
 sakura-worker = "sakura.worker.__main__:main"
@@ -68,9 +80,9 @@ markers = [
 ]
 
 [tool.coverage.run]
-# The L'Atelier training backends drive Ludwig / Ultralytics / TabPFN / PEFT,
-# none of which CI installs (each lives in its own GPU-runner venv,
-# docs/atelier/envs/). Their unit tests still run here against fakes; the
+# The L'Atelier training backends drive Ludwig / Ultralytics / TabPFN / PEFT /
+# Transformers (Whisper), none of which CI installs (each lives in its own
+# GPU-runner venv, docs/atelier/envs/). Their unit tests still run here against fakes; the
 # training paths are verified on the GPU runners through the engine CLI.
 # Everything else in sakura/atelier (spec, registry, data, CLI) is measured.
 omit = [
@@ -78,6 +90,7 @@ omit = [
     "sakura/atelier/backends/ultralytics.py",
     "sakura/atelier/backends/tabpfn.py",
     "sakura/atelier/backends/peft.py",
+    "sakura/atelier/backends/whisper.py",
 ]
 
 [tool.mypy]
@@ -92,7 +105,6 @@ module = [
     "datasets.*",
     "accelerate.*",
     "zakuro.*",
-    "gnutools.*",
     "sakura_wire.*",
     "pynvml",
     "pynvml.*",
@@ -115,8 +127,28 @@ module = [
     "onnx.*",
     "onnxruntime.*",
     "sklearn.*",
+    # risk_sim (sakura.atelier.risk): scipy ships no stubs
+    "scipy",
+    "scipy.*",
     "mlx_lm.*",
     "llama_cpp.*",
+    "open_clip",
+    "open_clip.*",
+    # classic_ml and hf_* backends, each imported only inside its own venv
+    "huggingface_hub",
+    "huggingface_hub.*",
+    "lightgbm",
+    "lightgbm.*",
+    "xgboost",
+    "xgboost.*",
+    "catboost",
+    "catboost.*",
+    "joblib",
+    "joblib.*",
+    "skl2onnx",
+    "skl2onnx.*",
+    "onnxmltools",
+    "onnxmltools.*",
 ]
 ignore_missing_imports = true
 

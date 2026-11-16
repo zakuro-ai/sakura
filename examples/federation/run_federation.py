@@ -181,7 +181,12 @@ def main() -> None:
         default="w0,w1",
         help="comma-separated worker ids that must connect before round 1",
     )
-    lp.add_argument("--codec", default="int8", choices=["int8", "fp32raw"])
+    lp.add_argument(
+        "--codec",
+        default="int8",
+        choices=["int8", "fp32raw", "auto"],
+        help="auto = pick int8/int4/topk from the bootstrap link probe",
+    )
     lp.add_argument("--gap", type=float, default=30.0, help="seconds between rounds")
     lp.add_argument(
         "--link-duty",
@@ -190,7 +195,9 @@ def main() -> None:
         help=">0 = self-paced gap targeting this inter-region link occupancy "
         "(e.g. 0.5); overrides --gap after the first round",
     )
-    lp.add_argument("--shards", type=int, default=1, help="K-way streaming shards")
+    lp.add_argument(
+        "--shards", type=int, default=1, help="K-way streaming shards (0 = auto)"
+    )
     lp.add_argument(
         "--rounds", type=int, default=0, help="stop after N rounds (0=run forever)"
     )
@@ -206,7 +213,7 @@ def main() -> None:
         "--codec",
         default="int8",
         choices=["int8", "fp32raw"],
-        help="must match the leader",
+        help="initial upload codec; the leader's per-round choice wins",
     )
     wp.add_argument(
         "--steps", type=int, default=0, help="stop after N steps (0=run forever)"

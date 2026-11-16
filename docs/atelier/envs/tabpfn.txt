@@ -1,4 +1,4 @@
-# sakura/atelier/backends/tabpfn.py -- exact pins verified on a single-GPU Linux host
+# sakura/atelier/backends/tabpfn.py -- exact pins verified on the GPU host GPU0
 # (RTX 2080 Ti, CUDA 12.1 wheels), python 3.11, 2026-10-02.
 #
 # uv venv .venv --python 3.11
@@ -20,6 +20,14 @@ onnxruntime-gpu==1.30.0
 
 # Licence: TabPFN v2 weights carry the Prior Labs licence (CONTRACTS §2.4).
 #
-# ONNX export status (see tabpfn.py's module docstring and this track's
-# development notes for the measured outcome): a bounded attempt only, may fail
-# and report why rather than ship a broken artifact.
+# ONNX export: `onnx` = an MLP student distilled from TabPFN's predictions
+# (no TabPFN weights inside); onnx + onnxruntime are needed to export and
+# re-score it. Decision and measured numbers: docs/atelier/tabpfn-export.md
+# (issue #67). Verified on the GPU host 2026-10-04 with onnx==1.23.1 and
+# onnxruntime==1.30.0 (CPU build).
+
+# notebook bundle (CONTRACTS §2.5): the run writes and re-executes its own notebook here
+nbformat>=5.10
+nbclient>=0.10
+ipykernel>=6.29
+matplotlib>=3.8

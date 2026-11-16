@@ -21,6 +21,7 @@ dump.rdb
 .env
 models/
 .coverage
+coverage.xml
 
 # Rust
 /target/
@@ -35,3 +36,5 @@ models/
 .python-version
 .venv/
 
+# Internal design docs / plans — kept locally, not pushed.
+docs/superpowers/

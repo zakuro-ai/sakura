@@ -1,0 +1,36 @@
+# decision/lora-forge@1 -- immutable once released (CONTRACTS §1.1).
+#
+# The System One task (zak-forge docs/specs/2026-10-21-decision-task-design.md, Part B):
+# LoRA on a small BASE model (not chat), trained to put the right option letter's logit
+# on top, then a temperature per answer type fitted on a held-out calibration split.
+#
+# base_model_allowlist: {repo id: pinned commit}. Permissive licences only; a base off
+# this list is refused at validate (`base model not on the allowlist`), and the list cannot
+# be widened by `overrides`. A `base_revision` left unset resolves to the pinned commit, and any other
+# revision is refused: the licence review is of that commit, so a newer one is a new preset version.
+# Checked against the Hugging Face Hub on 2026-10-23 (the card's `license` field AND the Apache-2.0
+# text of the LICENSE file at that commit; public, `gated: false`; `sha` = head of `main` that day):
+#   Qwen/Qwen3.5-2B-Base  apache-2.0  2.27B params  b1485b2fa6dfa1287294f269f5fb618e03d52d7c
+#   Qwen/Qwen3.5-4B-Base  apache-2.0  4.66B params  1001bb4d826a52d1f399e183466143f4da7b741b
+# The Hub lists their architecture as Qwen3_5ForConditionalGeneration (a vision tower
+# is bundled); transformers' AutoModelForCausalLM loads the text model (Qwen3_5ForCausalLM)
+# from the same checkpoint. Layers are a hybrid of gated-delta-net and full attention.
+#
+# Rank, learning rate, batch and sequence length are starting values, NOT tuned: no sweep
+# has been run on real labelled decisions. `epochs: 3` is the design's example. The
+# hardware the design guesses (2B on 16 GB, 4B on 24 GB for LoRA training) is UNMEASURED.
+hyperparameters:
+  base_model_allowlist:
+    Qwen/Qwen3.5-2B-Base: b1485b2fa6dfa1287294f269f5fb618e03d52d7c
+    Qwen/Qwen3.5-4B-Base: 1001bb4d826a52d1f399e183466143f4da7b741b
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules: all-linear  # attention + MLP (+ the hybrid layers' projections); never lm_head
+  epochs: 3
+  batch_size: 8
+  grad_accum: 2
+  learning_rate: 0.0001
+  max_seq_length: 1024  # state + question + options; a longer state is cut (and counted in the report)
+  precision: bf16
+  prompt_template: decision/v1

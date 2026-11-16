@@ -1,0 +1,13 @@
+# time_series_forecasting/ecd@1 -- immutable once released (CONTRACTS §1.1).
+# One series, one column: Ludwig builds lookback windows (`window_size` rows) and forward windows (`horizon` rows)
+# from the column-major table. Needs Ludwig >= 0.17 (docs/atelier/envs/ludwig-0.17.txt). Verified encoders: rnn
+# (default), parallel_cnn, transformer. On a noisy two-period sine (horizon 6, 25 epochs, RMSE; repeat-last baseline
+# 0.745): rnn 0.098, parallel_cnn 0.309, transformer 0.593. patchtst/nbeats are rejected (Ludwig 0.17.9 cannot
+# reload them), stacked_cnn segfaults.
+hyperparameters:
+  encoder: rnn
+  window_size: 48
+  horizon: 12
+  epochs: 30
+  batch_size: 64
+  learning_rate: 0.001

@@ -81,6 +81,34 @@ class TrainResult:
     metrics: dict[str, float]
     train_seconds: float
     checkpoint: Checkpoint | None = None
+    #: What the backend actually trained from, when the model id alone does not
+    #: say (e.g. peft: the base checkpoint, requested revision and resolved
+    #: commit). Copied into ``report.json`` as ``provenance`` (CONTRACTS §2.1).
+    provenance: dict[str, Any] | None = None
+    #: What stopped training (``{metric, mode, patience, best_epoch, stopped_epoch, ...}``)
+    #: and the per-epoch metrics, for backends that know them. Copied into
+    #: ``report.json`` as ``early_stop`` / ``epoch_metrics`` (CONTRACTS §2.1).
+    early_stop: dict[str, Any] | None = None
+    epoch_metrics: list[dict[str, Any]] | None = None
+    #: ``{enabled, ops}`` of the training-split augmentation the backend applied; None when the recipe has no
+    #: ``augmentation`` block. Copied into ``report.json`` and ``evaluation.augmentation``.
+    augmentation: dict[str, Any] | None = None
+    #: A backend's own ``calibration`` block (the ``decision`` task: method, temperatures, ECE before and after)
+    #: and complete ``evaluation`` block. Copied into ``report.json`` / used in place of the generic evaluation
+    #: when set; None for every other task.
+    calibration: dict[str, Any] | None = None
+    evaluation: dict[str, Any] | None = None
+    #: ``{"reason": "wrap_up", "epoch", "step"}`` when the backend stopped learning on the wrap-up signal
+    #: (``sakura.atelier.wrap_up``). Copied into ``report.json`` as ``stopped_early``.
+    stopped_early: dict[str, Any] | None = None
+    #: ``{"max_steps": n}`` when ``limits.max_steps`` changed a backend that has no step loop to stop
+    #: (classic_ml's estimator count, risk_sim's iterations, tabpfn's distillation). A backend with a loop
+    #: reports the cap through ``stopped_early`` (reason ``max_steps``) instead. Merged into
+    #: ``report.json`` ``limits_applied`` (CONTRACTS §2.1).
+    limits_applied: dict[str, Any] | None = None
+    #: Further top-level ``report.json`` blocks a backend owns, by key (``distillation``: the teacher and
+    #: both scores). Copied into the report as they are; they never replace a key the engine writes.
+    report: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +117,10 @@ class Artifact:
     format: str
     sha256: str
     bytes: int
+    #: Format-specific measurements the backend wants in ``report.json`` next to
+    #: the artifact's entry (CONTRACTS §2.1), e.g. the whisper ``ggml`` export's
+    #: ``footprint_bytes`` and the quantisation step's peak RSS. None = nothing extra.
+    extras: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +134,21 @@ class RuntimeEval:
     n: int
     matches_training: bool | None
     reason: str | None = None
+    #: The execution provider the runtime session ACTUALLY used
+    #: (``session.get_providers()[0]``), not the one that was asked for:
+    #: onnxruntime-gpu falls back to CPU silently when a CUDA library is missing.
+    provider: str | None = None
+    #: The training-side score of ``metric`` on the SAME rows this check used, and how many (set only when the
+    #: check used fewer rows than the training's final evaluation, ``runtime_eval_rows``): the value
+    #: ``matches_training`` is judged against, instead of the run's metric over all its final rows.
+    train_value: float | None = None
+    train_n: int | None = None
+    #: How many rows the check was capped from (the run's ``runtime_eval_rows``, or the default cap); None = not capped.
+    n_total: int | None = None
+    #: Rows left out of the check because they have no target (evaluation-only rows, #238); 0 = none.
+    rows_eval_only: int = 0
+    #: Rows the runtime could not take on their own (out of memory) and the check left out; 0 = none.
+    rows_skipped: int = 0
 
 
 class MetricsSink:

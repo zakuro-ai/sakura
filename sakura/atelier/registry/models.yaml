@@ -2,10 +2,20 @@
 #
 # `tasks` is the set this model id can be requested for; AtelierSpec.model
 # must be one of these keys and spec.task must be in its `tasks` list.
-# Contract: docs/atelier/CONTRACTS.md §2.2 routing table.
+# `exports` lists the formats a spec may request; `export` must be non-empty
+# unless the model sets `export_optional: true` (run it as a reference only).
+# Contract: docs/atelier/CONTRACTS.md §2.2 routing table. This file IS that table: `backend` +
+# `task_default` drive sakura.atelier.backends.backend_name, the image labels and the hub
+# (`python -m sakura.atelier routes`). Nothing else may hand-copy it.
+# `device` (required): `cpu` = trains at full speed on a CPU-only machine (classic ML, the small
+# Ludwig tabular / time-series nets); `gpu` = needs a GPU to finish in reasonable time. The hub
+# drafts `placement.gpus: 0` for a cpu model; a gpu model lands on a CPU only if the user accepts
+# the (much longer) ETA (routes `devices`).
 
 resnet18:
   backend: ludwig
+  device: gpu
+  task_default: true  # owns its tasks' route (registry/routes.py)
   tasks: [image_classification]
   exports: [onnx, torchscript]
   source: torchvision://resnet18
@@ -13,6 +23,8 @@ resnet18:
 
 stacked_cnn_audio:
   backend: ludwig
+  device: gpu
+  task_default: true  # owns its tasks' route (registry/routes.py)
   tasks: [audio_classification]
   exports: [onnx, torchscript]
   source: ludwig://stacked_cnn
@@ -20,6 +32,8 @@ stacked_cnn_audio:
 
 ludwig_ecd:
   backend: ludwig
+  device: cpu
+  task_default: true  # owns its tasks' route (registry/routes.py)
   tasks: [tabular_classification, tabular_regression]
   exports: [onnx]
   source: ludwig://ecd  # Encoder-Combiner-Decoder (tabular deep net)
@@ -27,33 +41,234 @@ ludwig_ecd:
 
 tabpfn_v2:
   backend: tabpfn
+  device: gpu
   tasks: [tabular_classification, tabular_regression]
-  exports: []  # in-context: preprocessing + ensembling live outside the torch module, so
-  # no faithful ONNX exists (backends/tabpfn.py). Evaluation-only; ludwig_ecd ships ONNX.
+  # onnx = an MLP student distilled from TabPFN's predictions, NOT TabPFN itself: TabPFN's
+  # preprocessing (per-row SHA-256 fingerprint, quantile/SVD per ensemble member) has no ONNX
+  # form (issue #67, docs/atelier/tabpfn-export.md). The student holds no TabPFN
+  # weights; shipping it is still the owner's licence call, tracked by the hub team.
+  exports: [onnx]
+  export_optional: true  # export: [] stays valid -- TabPFN as the accuracy reference
   source: huggingface://Prior-Labs/TabPFN-v2
-  # Weights ungated as of tabpfn==2.1.3 (verified: no account needed).
+  # Weights ungated as of tabpfn==2.1.3 (verified on the build host: no account needed).
   # Releases >=6 gate the same weights behind a Prior Labs account + API key
   # -- do not upgrade past the pin without re-checking this. See CONTRACTS §2.2.
   license: Prior-Labs-License
 
-yolo11n:
-  backend: ultralytics
+rtdetr_r18:
+  backend: hf_detection
+  device: gpu
+  task_default: true  # owns its tasks' route (registry/routes.py)
   tasks: [object_detection]
   exports: [onnx]
-  source: ultralytics://yolo11n
-  license: AGPL-3.0  # track E2; flag before anything ships to customers (CONTRACTS §2.4)
+  source: huggingface://PekingU/rtdetr_r18vd  # RT-DETR, ResNet-18 backbone
+  # Apache-2.0 per the model card (verified before use, see this track's
+  # handoff report) -- replaces the AGPL-3.0 ultralytics/yolo11n backend so no
+  # customer job depends on AGPL code (CONTRACTS §2.4).
+  license: Apache-2.0
 
 lfm2-350m:
   backend: peft
+  device: gpu
+  task_default: true  # owns its tasks' route (registry/routes.py)
   tasks: [text_generation]
   exports: [gguf, safetensors, mlx]  # mlx only where mlx-lm imports (Apple silicon)
   source: huggingface://LiquidAI/LFM2-350M
   license: LFM-Open-License-v1.0  # track E2; flag before anything ships to customers
+  # Hyper-parameter values merged UNDER the preset (preset and overrides win):
+  # the base the peft backend loads when the preset/overrides do not name one,
+  # so resolved.yaml and report.json always record which weights were used.
+  hp_defaults:
+    base_model: LiquidAI/LFM2-350M
+    base_revision: null
+
+hf-causal-lm:
+  backend: peft
+  device: gpu
+  tasks: [text_generation]
+  exports: [gguf, safetensors, mlx]
+  # Generic Hugging Face causal LM (what La Forge's legacy LLM jobs fine-tune:
+  # Qwen/Qwen3-4B, meta-llama/Llama-3.1-8B, ...). `hf://<base_model>` means
+  # the weights are whatever `hyperparameters.base_model` names on the Hub
+  # (any AutoModelForCausalLM repo, or a local checkpoint dir), at
+  # `base_revision` (null = the repo's default branch). It MUST be given
+  # through `overrides` (or a preset); resolve() refuses the spec otherwise.
+  source: hf://<base_model>
+  hp_required: [base_model]
+  hp_defaults:
+    base_revision: null
+  license: per-base-model  # the chosen repo's licence; recorded in report.json provenance
+
+hf-decision-lm:
+  backend: peft
+  device: gpu
+  task_default: true  # owns its tasks' route (registry/routes.py)
+  model_route: true  # listed in MODEL_BACKENDS although it matches its task's default
+  tasks: [decision]
+  # safetensors only in v1: a gguf runtime cannot reproduce the restricted option-letter
+  # readout or the fitted calibration temperature, so a gguf request is refused at validate.
+  exports: [safetensors]
+  # The System One task (zak-forge FORGE-0021). `hyperparameters.base_model` names the weights
+  # and must be on the preset's `base_model_allowlist` (decision/lora-forge@1); resolve() refuses
+  # anything else. A `base_revision` left unset resolves to the allowlist's pinned commit.
+  source: hf://<base_model>
+  hp_required: [base_model]
+  hp_defaults:
+    base_revision: null
+  license: per-base-model  # the allowlist holds permissive licences only; recorded in report.json provenance
 
 deepspeech2:
   backend: deepspeech
+  device: gpu
+  task_default: true  # owns its tasks' route (registry/routes.py)
   tasks: [speech_recognition]
   exports: [safetensors]
   source: pip://asr-deepspeech  # DeepSpeech2 (conv + bidirectional GRU/LSTM, CTC), trained from scratch
   # Trained on the Sakura 1.0 runtime (async eval, process-isolated checkpoint writes, mixed precision).
   license: MIT
+
+whisper-small:
+  backend: whisper
+  device: gpu
+  tasks: [speech_recognition]
+  exports: [safetensors, ggml]  # ggml = whisper.cpp, quantised per hp.ggml_quant (q5_0 default)
+  source: huggingface://openai/whisper-small  # 244M params; fits a ~7 GB GPU with LoRA + fp16
+  license: Apache-2.0
+
+whisper-large-v3-turbo:
+  backend: whisper
+  device: gpu
+  tasks: [speech_recognition]
+  exports: [safetensors, ggml]  # ggml = whisper.cpp, quantised per hp.ggml_quant (q5_0 default)
+  source: huggingface://openai/whisper-large-v3-turbo  # 809M params: needs gradient_checkpointing on <= 12 GB
+  license: Apache-2.0
+
+ludwig_forecaster:
+  backend: ludwig
+  device: cpu
+  task_default: true  # owns its tasks' route (registry/routes.py)
+  tasks: [time_series_forecasting]
+  exports: [onnx]
+  source: ludwig://timeseries  # Ludwig >= 0.17: timeseries input/output features, forecast(horizon=N)
+  license: Apache-2.0
+
+ludwig_text:
+  backend: ludwig
+  device: gpu
+  task_default: true  # owns its tasks' route (registry/routes.py)
+  tasks: [text_classification]
+  exports: [onnx]
+  source: ludwig://text  # text encoder (learned from scratch, or a Hugging Face encoder via `pretrained_model`)
+  license: Apache-2.0
+
+siglip2_b16_256:
+  backend: open_clip
+  device: gpu
+  task_default: true  # owns its tasks' route (registry/routes.py)
+  tasks: [image_regression]
+  exports: [onnx]
+  source: open_clip://ViT-B-16-SigLIP2-256/webli  # timm ViT-B/16 image tower, 256 px, 86M params
+  license: Apache-2.0
+
+# Templates of `hf:<repo>@<sha>` classification models (registry/routes.py
+# HF_TASK_TEMPLATES): any AutoModelFor{Image,Audio,Sequence}Classification repo,
+# loaded without remote code; the hf ref fills base_model / base_revision.
+hf-image-classifier:
+  backend: hf_image_classification
+  device: gpu
+  tasks: [image_classification]
+  exports: [onnx, safetensors, onnx_int8]  # onnx_int8 = the float graph, weights quantised (SAK-0019)
+  source: hf://<base_model>
+  hp_required: [base_model]
+  hp_defaults:
+    base_revision: null
+  license: per-base-model
+
+hf-audio-classifier:
+  backend: hf_audio_classification
+  device: gpu
+  tasks: [audio_classification]
+  exports: [onnx, safetensors, onnx_int8]  # onnx_int8 = the float graph, weights quantised (SAK-0019)
+  source: hf://<base_model>
+  hp_required: [base_model]
+  hp_defaults:
+    base_revision: null
+  license: per-base-model
+
+hf-text-classifier:
+  backend: hf_text_classification
+  device: gpu
+  tasks: [text_classification]
+  exports: [onnx, safetensors, onnx_int8]  # onnx_int8 = the float graph, weights quantised (SAK-0019)
+  source: hf://<base_model>
+  hp_required: [base_model]
+  hp_defaults:
+    base_revision: null
+  license: per-base-model
+
+# Classic ML on tables (backends/classic_ml.py): one ColumnTransformer + the estimator, exported as one ONNX
+# graph over the raw columns, or the pickled pipeline (joblib). Trained from scratch: no weights.
+lightgbm:
+  backend: classic_ml
+  device: cpu
+  tasks: [tabular_classification, tabular_regression]
+  exports: [onnx, joblib]
+  source: pypi://lightgbm
+  license: MIT
+
+xgboost:
+  backend: classic_ml
+  device: cpu
+  tasks: [tabular_classification, tabular_regression]
+  exports: [onnx, joblib]
+  source: pypi://xgboost
+  license: Apache-2.0
+
+catboost:
+  backend: classic_ml
+  device: cpu
+  tasks: [tabular_classification, tabular_regression]
+  exports: [onnx, joblib]
+  source: pypi://catboost
+  license: Apache-2.0
+
+random_forest:
+  backend: classic_ml
+  device: cpu
+  tasks: [tabular_classification, tabular_regression]
+  exports: [onnx, joblib]
+  source: pypi://scikit-learn (RandomForest*)
+  license: BSD-3-Clause
+
+hist_gradient_boosting:
+  backend: classic_ml
+  device: cpu
+  tasks: [tabular_classification, tabular_regression]
+  exports: [onnx, joblib]
+  source: pypi://scikit-learn (HistGradientBoosting*)
+  license: BSD-3-Clause
+
+# Supply-chain Value-at-Risk (backends/risk_sim.py, sakura/atelier/risk.py): historical, delta-normal,
+# peaks-over-threshold EVT and a Student-t copula Monte Carlo on three tables (losses, factors, exposure).
+# Nothing is trained; the `json` export is the results with their run manifest, and runtime_eval replays it
+# bit for bit. numpy/scipy/pandas only, CPU.
+scvar-copula:
+  backend: risk_sim
+  device: cpu
+  task_default: true  # owns its tasks' route (registry/routes.py)
+  tasks: [risk_simulation]
+  exports: [json]
+  source: sakura://atelier/risk
+  license: Apache-2.0
+
+# Path walking on a knowledge graph (backends/rl.py, sakura/atelier/kg.py): a small policy network trained
+# with REINFORCE on a triples table, from random weights. PyTorch on a CPU; the exports are the one-hop
+# policy, delivered with graph.json (vocabulary and triples).
+kg-path-policy:
+  backend: rl
+  device: cpu
+  task_default: true  # owns its task's route (registry/routes.py)
+  tasks: [reinforcement_learning]
+  exports: [torchscript, onnx]
+  source: sakura://atelier/backends/rl
+  license: Apache-2.0

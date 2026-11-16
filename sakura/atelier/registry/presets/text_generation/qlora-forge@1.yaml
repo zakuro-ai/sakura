@@ -1,0 +1,23 @@
+# text_generation/qlora-forge@1 -- immutable once released (CONTRACTS §1.1).
+# Mirrors La Forge's legacy LLM runner (zak-forge src/forge/runner/adapters/
+# unsloth_trainer.py: load_in_4bit=True, max_seq_length=2048, prompt/completion
+# pairs under template.py's "### Instruction:" format, LoRA on the seven
+# attention+MLP projections) with the defaults of its job schema
+# (src/forge/spec/schema.py: AdapterSpec r=16 alpha=32; TrainerSpec epochs=3,
+# learning_rate=1e-4, batch_size=1, gradient_accumulation_steps=16). The hub
+# sends its own values through `overrides`; these are what a job gets when it
+# does not. `base_model` is not here on purpose: it comes from the model entry
+# (lfm2-350m) or from `overrides` (hf-causal-lm requires it).
+hyperparameters:
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.0  # unsloth's get_peft_model default; the legacy runner sets none
+  lora_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  epochs: 3
+  batch_size: 1
+  grad_accum: 16
+  learning_rate: 0.0001
+  max_seq_length: 2048
+  precision: 4bit  # bitsandbytes NF4 QLoRA; CUDA only (docs/atelier/envs/peft.txt)
+  prompt_template: alpaca
+  gguf_quant: Q4_K_M  # the hub picks per device class (Q8_0 | Q6_K | MXQ4 | Q4_K_M) via overrides

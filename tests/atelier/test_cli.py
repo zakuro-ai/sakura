@@ -4,6 +4,8 @@ run()'s failure paths, which must all work without a training stack."""
 
 import json
 
+import pytest
+
 from sakura.atelier.__main__ import main
 
 SPEC = """
@@ -232,3 +234,18 @@ def test_serve_on_a_failed_run_says_why_and_stops(tmp_path, capsys):
     (run_dir / "report.json").write_text(json.dumps({"status": "failed", "error": "boom"}))
     assert cli_module.main(["serve", str(run_dir)]) == 1
     assert "not 'done'" in json.loads(capsys.readouterr().out)["error"]
+
+
+@pytest.mark.parametrize("given, want", [(None, "expandable_segments:True"), ("max_split_size_mb:128", "max_split_size_mb:128")])
+def test_the_cli_sets_the_cuda_allocator_option_only_when_the_operator_set_none(given, want):
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k != "PYTORCH_CUDA_ALLOC_CONF"}
+    if given is not None:
+        env["PYTORCH_CUDA_ALLOC_CONF"] = given
+    done = subprocess.run(
+        [sys.executable, "-c", "import os, sakura.atelier.__main__; print(os.environ['PYTORCH_CUDA_ALLOC_CONF'])"],
+        capture_output=True, text=True, env=env, check=True)
+    assert done.stdout.strip().splitlines()[-1] == want

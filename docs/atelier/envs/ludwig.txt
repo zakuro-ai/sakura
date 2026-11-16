@@ -1,15 +1,15 @@
 # Ludwig backend runner venv -- the recipe the GPU runners are deployed from
-# (Linux GPU hosts), verified by six CIFAR-10 runs on an
+# (the build host and the GPU host, ~/atelier/envs/ludwig), verified by six CIFAR-10 runs on the build host's
 # RTX 2080 Ti on 2026-10-02 (20k/2k x3 epochs: 0.599, ONNX 0.600).
 #
 # bitsandbytes is UNINSTALLED after the ludwig install. ludwig==0.11.0 pins
 # `bitsandbytes<0.41.0` (resolves 0.40.2), and on a CUDA 13 host that version
 # raises RuntimeError("CUDA Setup failed") at import -- not ImportError, so it
 # escapes the `try: import bitsandbytes / except ImportError` guards ludwig
-# wraps every bnb import in, and `import ludwig.api` dies (seen on a GPU host;
+# wraps every bnb import in, and `import ludwig.api` dies (seen on the GPU host;
 # BNB_CUDA_VERSION is not honoured by 0.40.2). With bnb absent those guards
 # set bnb=None and ludwig runs; it only loses 8-bit optimizers, which no
-# atelier preset uses. Verified 2026-10-02.
+# atelier preset uses. Verified on the build host and the GPU host 2026-10-02.
 #
 # Build (what deploy_atelier_runner.sh runs):
 #   uv venv -p 3.11 ludwig
@@ -18,16 +18,32 @@
 #   uv pip install --python ludwig/bin/python ludwig==0.11.0 onnx==1.23.1 \
 #       onnxruntime-gpu==1.30.0 pandas scikit-learn \
 #       datasets soundfile pyarrow torchcodec==0.17.0 \
-#       --extra-index-url https://download.pytorch.org/whl/cu130  "<sakura's own deps: tqdm numpy gnutools-python
+#       --extra-index-url https://download.pytorch.org/whl/cu130  "<sakura's own deps: tqdm numpy
 #       chardet lightning ipython charset-normalizer zakuro-ai cloudpickle
 #       pydantic pyyaml>"
 #   uv pip uninstall --python ludwig/bin/python bitsandbytes
 #
 # CUDA 13 wheels need compute capability >= 7.5 (Turing). Pascal cards
-# (e.g. GTX 1070, Quadro P620) are NOT supported by this venv --
+# (e.g. a GTX 1070 or a Quadro P620) are NOT supported by this venv --
 # build it with the cu121 torch index there instead.
 #
-# Resolved versions actually installed (`pip freeze` subset):
+# CUDA flavour of onnxruntime-gpu: the PyPI onnxruntime-gpu 1.30.0 wheel is built
+# against CUDA 13 and needs libcublasLt.so.13 (what the cu130 flavour above has).
+# On the cu121 flavour (CUDA 12 runtime; Pascal cards such as the Quadro P620) that
+# library does not exist, the CUDAExecutionProvider fails to load, and onnxruntime
+# SILENTLY falls back to CPU. report.json's `onnx_provider`
+# shows which provider the session really used. For cu121 install the CUDA-12 build
+# of onnxruntime-gpu from the onnxruntime CUDA-12 package feed instead of PyPI:
+#   uv pip install --python ludwig/bin/python onnxruntime-gpu==1.29.0 \
+#       --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/ \
+#       --extra-index-url https://pypi.org/simple
+# (1.30.0 is not published on that feed as of 2026-10-10; 1.29.0 is, and needs the
+# nvidia-*-cu12 12.8+ runtime wheels + cudnn 9. The image-side fix, with a patchelf RPATH
+# into the venv's nvidia/ dirs, ships in atelier-runner 0.3.4.) Verify in the venv:
+#   python -c "import onnxruntime as o; print(o.get_available_providers())"
+# and check that a run's report.json says "onnx_provider": "CUDAExecutionProvider".
+#
+# Resolved versions actually installed on the build host and the GPU host (`pip freeze` subset):
 torch==2.14.1+cu130
 ludwig==0.11.0
 onnx==1.23.1
@@ -41,3 +57,9 @@ pyarrow
 
 # Ludwig 0.11.0 has no GBM/LightGBM model type; the registry therefore has no
 # ludwig_gbm entry (tabular presets: tabular/ecd@1 and tabular/tabpfn@1).
+
+# notebook bundle (CONTRACTS §2.5): the run writes and re-executes its own notebook here
+nbformat>=5.10
+nbclient>=0.10
+ipykernel>=6.29
+matplotlib>=3.8

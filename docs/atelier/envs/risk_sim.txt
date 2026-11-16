@@ -1,0 +1,17 @@
+# sakura/atelier/backends/risk_sim.py -- verified by tests/atelier/test_risk_sim.py (CPU, python 3.12).
+# No torch, no GPU. A bit-exact replay needs the same numpy/scipy as the run (results.json records them).
+# python: 3.12
+#
+# Licences: numpy, scipy, pandas BSD-3-Clause; pyarrow Apache-2.0.
+
+numpy==2.5.4
+pandas==3.1.1
+pyarrow==26.0.1
+scipy==1.18.1
+pyyaml>=6.0
+
+# notebook bundle (CONTRACTS §2.5)
+nbformat>=5.10
+nbclient>=0.10
+ipykernel>=6.29
+matplotlib>=3.8
