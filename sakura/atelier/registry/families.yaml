@@ -1,0 +1,7 @@
+# Runner image families: each family job image carries the
+# venvs of these backends. Every backend module is in exactly one family; `all` is the union.
+tabular: [ludwig, tabpfn, classic_ml, risk_sim, rl]
+vision: [hf_detection, open_clip, hf_image_classification]
+audio: [whisper, deepspeech, hf_audio_classification]
+llm: [peft, hf_text_classification]
+all: [ludwig, tabpfn, classic_ml, risk_sim, hf_detection, open_clip, whisper, deepspeech, peft, hf_image_classification, hf_audio_classification, hf_text_classification, rl]

@@ -1,0 +1,37 @@
+# sakura/atelier/backends/ludwig.py on Ludwig 0.17.x: image / audio / tabular / text classification AND time-series
+# forecasting (the timeseries features and forecast(horizon=N) need >= 0.17). Replaces docs/atelier/envs/ludwig.txt
+# (Ludwig 0.11.0, Python 3.11) for new deployments; the old env still runs the pre-0.17 tasks.
+#
+# Ludwig 0.17 needs Python >= 3.12 and PyTorch >= 2.7. Build it on a filesystem with free inodes (a venv is
+# 10^4-10^5 small files; the GPU host's /mnt/hdcx ran out of inodes at 2.9 TB free):
+#
+# uv venv ~/envs/ludwig17 --python 3.12
+# uv pip install --python ~/envs/ludwig17/bin/python torch==2.14.1 torchvision torchaudio \
+#     --extra-index-url https://download.pytorch.org/whl/cu130
+# uv pip install --python ~/envs/ludwig17/bin/python -r docs/atelier/envs/ludwig-0.17.txt
+#
+# Verified on the GPU host (RTX 2080 Ti, CUDA 13): image/audio/tabular runs unchanged (ONNX re-scores match), forecasting
+# and text classification via tests/atelier/test_ludwig_usecases.py.
+#
+# Ludwig 0.17.9 fixes an RCE in checkpoint loading (GHSA-q85h-wmmp-59p8: MultiNodeCheckpoint.load used
+# torch.load(weights_only=False)); do not run anything older on untrusted checkpoints.
+
+ludwig==0.17.9
+onnx
+onnxruntime
+pydantic
+pyyaml
+pandas
+pillow
+soundfile
+cloudpickle
+chardet
+ipython
+lightning
+zakuro-ai
+
+# notebook bundle (CONTRACTS §2.5): the run writes and re-executes its own notebook here
+nbformat>=5.10
+nbclient>=0.10
+ipykernel>=6.29
+matplotlib>=3.8

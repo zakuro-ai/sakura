@@ -40,8 +40,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
+from sakura.atelier.spec import features_of
 from sakura.atelier.types import (
     Artifact,
     Checkpoint,
@@ -52,6 +53,7 @@ from sakura.atelier.types import (
     RuntimeEval,
     TrainResult,
 )
+from sakura.atelier.wrap_up import WrapUpWatch, max_steps_of
 
 LICENSE = "MIT (asr-deepspeech)"
 
@@ -102,6 +104,42 @@ def _build_model(vocab: list[str], model_kwargs: dict[str, Any], pre: dict[str, 
     return model
 
 
+class _WrapUpLoader:
+    """The train loader as the trainer sees it, ending the epoch at the next batch once wrap-up is
+    requested. The trainer has no step hook, so this is the step boundary: it finishes the short epoch
+    (evaluation and the best/rolling checkpoints included) and, with its ``_stop`` flag set (the one
+    ``stop_cer`` uses), runs no further epoch."""
+
+    def __init__(self, loader: Any, watch: WrapUpWatch, out_trainer: list[Any]) -> None:
+        self._loader = loader
+        self._watch = watch
+        self._trainer = out_trainer  # one-slot holder, filled once the trainer exists
+        self._epoch = -1
+        self._ended = False  # an epoch was cut short: no later epoch trains
+
+    def __len__(self) -> int:
+        return len(self._loader)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._loader, name)
+
+    def __iter__(self) -> Any:
+        self._epoch += 1
+        if self._ended:
+            return
+        total = max(len(self._loader), 1)
+        for i, batch in enumerate(self._loader):
+            # at least one batch trains: an epoch with none makes the trainer raise (no valid loss), and
+            # the wrap-up must still end with a scored, saved model
+            if self._watch.stop(self._epoch + i / total, self._epoch * total + i) and i >= 1:
+                break
+            yield batch
+        if self._watch.triggered:
+            self._ended = True
+            for trainer in self._trainer:
+                trainer._stop = True
+
+
 class _MetricsCallbacks:
     """Streams the trainer's per-epoch events into ``metrics.jsonl``."""
 
@@ -127,6 +165,9 @@ class DeepSpeechBackend:
     #: Seeds and cuDNN determinism still apply; CTC's native CUDA backward is not bit-exact.
     deterministic_algorithms = False
 
+    #: Set below, once the methods exist (see NOTEBOOK_CELLS at the end of the module).
+    NOTEBOOK_CELLS: ClassVar[tuple[Any, ...]]
+
     # ------------------------------------------------------------------ train
 
     def train(
@@ -151,8 +192,8 @@ class DeepSpeechBackend:
             raise ValueError("data.labels must be a CTC alphabet with the blank '_' first")
         vocab = list(data.labels)
         labels_map = {c: i for i, c in enumerate(vocab)}
-        audio_col = spec.spec.features.inputs[0].name
-        text_col = spec.spec.features.output.name
+        audio_col = features_of(spec.spec).inputs[0].name
+        text_col = features_of(spec.spec).output.name
         root = data.extra["audio_root"]
 
         pre = {
@@ -203,6 +244,7 @@ class DeepSpeechBackend:
             epochs += int(load_checkpoint(newest[-1])["epoch"]) + 1
 
         callbacks = _MetricsCallbacks(metrics)
+        watch = WrapUpWatch(out.root, max_steps_of(spec))
         trainer = DeepSpeechTrainer(
             model,
             CTCLoss(reduction="sum", zero_infinity=True),
@@ -226,7 +268,8 @@ class DeepSpeechBackend:
             callbacks=callbacks,
         )
         t0 = time.time()
-        run_metrics = trainer.run(train_loader, val_loader)
+        holder: list[Any] = [trainer]
+        run_metrics = trainer.run(_WrapUpLoader(train_loader, watch, holder), val_loader)
         train_seconds = time.time() - t0
         if run_metrics.best_cer is None:
             # Evaluations that fail inside the trainer are logged and skipped so a flaky
@@ -254,6 +297,7 @@ class DeepSpeechBackend:
             metrics=final,
             train_seconds=train_seconds,
             checkpoint=Checkpoint(path=out.checkpoint, model=spec.spec.model, task=spec.spec.task),
+            stopped_early=watch.stopped_early,
         )
 
     # ----------------------------------------------------------------- export
@@ -360,5 +404,15 @@ def _artifact(path: Path, fmt: str) -> Artifact:
             n += len(chunk)
     return Artifact(path=path, format=fmt, sha256=h.hexdigest(), bytes=n)
 
+
+#: Functions the notebook shows by source, in pipeline order (CONTRACTS §2.5): helpers before
+#: `train` are the Model section, those after `train`, `export` and `runtime_eval` follow that step.
+NOTEBOOK_CELLS = (
+    _audio_conf, _build_model,
+    DeepSpeechBackend.train, _MetricsCallbacks,
+    DeepSpeechBackend.export,
+    DeepSpeechBackend.runtime_eval, _load_export,
+)
+DeepSpeechBackend.NOTEBOOK_CELLS = NOTEBOOK_CELLS
 
 BACKEND = DeepSpeechBackend()

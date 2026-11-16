@@ -1,0 +1,15 @@
+# image_regression/siglip2@1 -- immutable once released (CONTRACTS §1.1).
+# Full fine-tune of SigLIP2 B/16-256 (backends/open_clip.py) with a linear head
+# on a standardised target. Values from the bulkorcut body-fat study (3,613
+# posts, 5-fold CV on an RTX 4090): photo-only MAE 2.36 frozen -> 2.07
+# fine-tuned at 10 epochs; ~45 s/epoch for 8.5k images at batch 64.
+hyperparameters:
+  epochs: 10
+  batch_size: 64
+  learning_rate: 0.00002   # backbone; Adam at 1e-4+ erodes the pretrained features
+  head_lr_mult: 50         # the fresh linear head learns at 1e-3
+  weight_decay: 0.05
+  warmup_epochs: 1         # linear warmup, then cosine to 0
+  grad_clip: 1.0
+  loss: smooth_l1          # on the standardised target; robust to noisy crowd labels
+  augment: true            # random resized crop (0.85-1.0), h-flip, colour jitter

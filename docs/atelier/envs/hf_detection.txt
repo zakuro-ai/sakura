@@ -1,0 +1,41 @@
+# sakura/atelier/backends/hf_detection.py -- exact pins, verified installing
+# together on the GPU host GPU0 (RTX 2080 Ti, CUDA 12.1 wheels), python 3.11.
+#
+# uv venv .venv --python 3.11
+# uv pip install --python .venv/bin/python torch torchvision \
+#     --index-url https://download.pytorch.org/whl/cu121
+# uv pip install --python .venv/bin/python \
+#     "transformers==4.47.1" "torchmetrics==1.6.0" faster-coco-eval scipy pillow pyyaml pandas \
+#     onnx onnxruntime-gpu
+
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+transformers==4.47.1
+torchmetrics==1.6.0
+faster-coco-eval==1.8.0  # torchmetrics MeanAveragePrecision needs this (or pycocotools) installed
+pillow>=10.0
+pyyaml>=6.0
+onnx==1.23.1
+onnxruntime-gpu==1.30.0
+scipy>=1.11  # RT-DETR's Hungarian matcher (transformers.loss.loss_rt_detr) needs it
+setuptools  # transformers JIT-builds an optional deformable-attention CUDA kernel at import time;
+# without setuptools it just falls back to the pure-torch path (slower, not fatal) -- this pin
+# is what lets that attempt happen at all rather than warning every run
+
+# Licence: the checkpoint this backend fine-tunes (PekingU/rtdetr_r18vd, RT-DETR
+# with a ResNet-18 backbone) is Apache-2.0 per its model card
+# (https://huggingface.co/PekingU/rtdetr_r18vd), and transformers/torchmetrics
+# are both Apache-2.0 -- no AGPL-3.0 code (ultralytics) anywhere in this backend's
+# import graph, unlike the backend it replaces (CONTRACTS §2.4).
+#
+# CPU-only alternative for CI/dev boxes without a GPU:
+#   uv pip install --python .venv/bin/python torch torchvision \
+#       --index-url https://download.pytorch.org/whl/cpu
+#   uv pip install --python .venv/bin/python "transformers==4.47.1" \
+#       "torchmetrics==1.6.0" pillow pyyaml pandas onnx onnxruntime
+
+# notebook bundle (CONTRACTS §2.5): the run writes and re-executes its own notebook here
+nbformat>=5.10
+nbclient>=0.10
+ipykernel>=6.29
+matplotlib>=3.8

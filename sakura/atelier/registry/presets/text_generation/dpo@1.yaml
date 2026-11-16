@@ -1,0 +1,14 @@
+# text_generation/dpo@1 -- immutable once released (CONTRACTS §1.1).
+# Direct Preference Optimization on {prompt, chosen, rejected} rows (peft backend, SAK-0019): a LoRA on the
+# policy, the starting weights as the frozen reference. `features.output` names the chosen completion;
+# `rejected_column` (default `rejected`) names the rejected one.
+hyperparameters:
+  objective: dpo
+  dpo_beta: 0.1
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+  epochs: 3
+  batch_size: 4
+  learning_rate: 0.00005
+  max_seq_length: 512

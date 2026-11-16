@@ -83,6 +83,32 @@ def test_image_folder_materialises_paths_and_labels(tmp_path):
     assert set(data.labels) == {"cat", "dog"}
     assert len(data.train) == 2 and len(data.validation) == 2
     assert all(str(root) in p for p in data.train["img"])
+    # The pin covers the images themselves, not the (empty) data dir.
+    manifest = json.loads((tmp_path / "data" / "manifest.json").read_text())
+    assert sorted(e["path"] for e in manifest) == [
+        "train/cat/0.png", "train/dog/0.png", "validation/cat/0.png", "validation/dog/0.png"]
+    assert all(e["bytes"] > 0 and len(e["sha256"]) == 64 for e in manifest)
+
+
+def test_image_folder_pin_is_stable_across_replay_and_tracks_the_bytes(tmp_path):
+    root = tmp_path / "images"
+    for label in ("cat", "dog"):
+        (root / label).mkdir(parents=True)
+        for i in range(3):
+            Image.new("RGB", (4, 4), color=(i, 2, 3)).save(root / label / f"{i}.png")
+    spec_yaml = IMAGE_SPEC.format(uri=f"file://{root}").replace(
+        'split: {train: "train", validation: "validation"}', "split: {validation_fraction: 0.34}")
+    spec = load_spec(spec_yaml)
+
+    first = materialise(spec, tmp_path / "data")
+    # A backend scattering caches next to the manifest must not move the pin.
+    (tmp_path / "data" / "training.hdf5").write_bytes(b"ludwig cache")
+    again = materialise(spec, tmp_path / "data")
+    assert again.manifest_sha256 == first.manifest_sha256
+
+    # ... but different image bytes must.
+    Image.new("RGB", (4, 4), color=(9, 9, 9)).save(root / "cat" / "0.png")
+    assert materialise(spec, tmp_path / "data2").manifest_sha256 != first.manifest_sha256
 
 
 def test_jsonl_is_read_as_one_record_per_line(tmp_path):

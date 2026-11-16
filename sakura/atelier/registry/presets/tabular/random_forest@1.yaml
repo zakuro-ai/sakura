@@ -1,0 +1,4 @@
+# tabular/random_forest@1 -- immutable once released (CONTRACTS §1.1).
+# classic_ml defaults for small-to-medium tables; overrides.params passes any other estimator argument.
+hyperparameters:
+  n_estimators: 300

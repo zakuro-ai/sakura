@@ -27,7 +27,7 @@ def test_parse_smi_line_rejects_garbage():
 
 
 def test_gpu_util_sampler_no_cuda_yields_zeros(monkeypatch):
-    # Force the no-CUDA path regardless of the host (the dev host may have a real GPU).
+    # Force the no-CUDA path regardless of the host (the build host has a real GPU).
     monkeypatch.setattr("sakura.bench.harness._cuda_available", lambda: False)
     with _GpuUtilSampler() as s:
         pass  # never starts a thread, never raises
